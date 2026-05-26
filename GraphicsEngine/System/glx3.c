@@ -14,9 +14,12 @@
 
 #include "glx3.h"
 
+extern int handleUserInput(int key, int pressed, int x, int y);
+extern int windowSizeUpdated(int width, int height);
+
 GLXDrawable whatToSwap=0;
 GLboolean  doubleBufferGLX3 = GL_TRUE;
-static int dblBuf[]  = {GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None};
+//static int dblBuf[]  = {GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None};
 
 Display   *display;
 Window     win;
@@ -108,6 +111,7 @@ int disableVSync() //This needs to be done before initialization of GLX3 stuff..
    run_getenv("vblank_mode");
    setenv ("vblank_mode", "0", 0);
    run_getenv("vblank_mode");
+   return 1;
 }
 
 
@@ -179,7 +183,7 @@ int start_glx3_stuffWindowed(int WIDTH,int HEIGHT,int argc,const char **argv)
 
       printf( "  Matching fbconfig %d, visual ID 0x%2x: SAMPLE_BUFFERS = %d, SAMPLES = %d\n", i, (unsigned int) vi -> visualid, samp_buf, samples );
 
-      if ( best_fbc < 0 || samp_buf && samples > best_num_samp )
+      if ( best_fbc < 0 || (samp_buf && samples > best_num_samp) )
         best_fbc = i, best_num_samp = samples;
       if ( worst_fbc < 0 || !samp_buf || samples < worst_num_samp )
         worst_fbc = i, worst_num_samp = samples;
@@ -577,11 +581,11 @@ int glx3_checkEvents()
         case KeyPress:
         {
           KeySym     keysym;
-          XKeyEvent *kevent;
+          //XKeyEvent *kevent;
           char       buffer[1];
           // It is necessary to convert the keycode to a
           // keysym before checking if it is an escape */
-          kevent = (XKeyEvent *) &event;
+          //kevent = (XKeyEvent *) &event;
           if (   (XLookupString((XKeyEvent *)&event,buffer,1,&keysym,NULL) == 1)
               && (keysym == (KeySym)XK_Escape) )
             exit(0);
