@@ -6,6 +6,20 @@ Takes a BGR image and produces per-person MHR body pose parameters, camera trans
 
 Also includes Python frontends that call the compiled shared library via ctypes, and a CSV exporter for the 70 MHR keypoints.
 
+### 🎬 Multi-person BVH motion-capture export
+
+`--bvh PATH` writes a **standard BVH motion-capture file per detected person** (`p_0.bvh`, `p_1.bvh`, …).
+Identities are kept stable across frames by a built-in 2D-bbox IoU tracker, each
+file's joint OFFSETs are auto-resized to the actor's measured bone lengths, and the
+output drops straight into Blender / BVHTester / any DCC. A bundled
+[`blender/blender_bvh_plugin.py`](blender/blender_bvh_plugin.py) drives a
+MakeHuman-rigged character from the result. See **[BVH export](#bvh-export---bvh)** for details.
+
+```bash
+./fast_sam_3dbody_run --from clip.mp4 --bvh ./p.bvh --headless
+# → p_0.bvh, p_1.bvh, …
+```
+
 ![SAM3DBody-cpp](doc/screen.jpg)
 
 ---
