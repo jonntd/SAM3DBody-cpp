@@ -51,21 +51,21 @@ struct Config
     bool        headless    = false;
     bool        info_only   = false;
 
-  /* On a good bw_cutoff value..
-  ┌────────────────────────┬──────────────────────┬────────────────────────────────────┐
-  │      --bw-cutoff       │      Approx lag      │               Effect               │
-  ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
-  │ 1.5 Hz                 │ ~212 ms / 6.4 frames │ Heavy smoothing, very laggy        │
-  ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
-  │ 3 Hz                   │ ~106 ms / 3.2 frames │ Moderate smoothing                 │
-  ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
-  │ 6 Hz                   │ ~53 ms / 1.6 frames  │ Light smoothing, barely noticeable │
-  ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
-  │ 10 Hz                  │ ~32 ms / ~1 frame    │ Minimal smoothing, sub-frame lag   │
-  ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
-  │ 12 Hz                  │ ~27 ms / 0.8 frames  │ Almost pass-through                │
-  └────────────────────────┴──────────────────────┴────────────────────────────────────┘
-  */
+    /* On a good bw_cutoff value..
+    ┌────────────────────────┬──────────────────────┬────────────────────────────────────┐
+    │      --bw-cutoff       │      Approx lag      │               Effect               │
+    ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
+    │ 1.5 Hz                 │ ~212 ms / 6.4 frames │ Heavy smoothing, very laggy        │
+    ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
+    │ 3 Hz                   │ ~106 ms / 3.2 frames │ Moderate smoothing                 │
+    ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
+    │ 6 Hz                   │ ~53 ms / 1.6 frames  │ Light smoothing, barely noticeable │
+    ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
+    │ 10 Hz                  │ ~32 ms / ~1 frame    │ Minimal smoothing, sub-frame lag   │
+    ├────────────────────────┼──────────────────────┼────────────────────────────────────┤
+    │ 12 Hz                  │ ~27 ms / 0.8 frames  │ Almost pass-through                │
+    └────────────────────────┴──────────────────────┴────────────────────────────────────┘
+    */
     bool        butterworth      = false;
     float       bw_cutoff        = 6.0f;  // Hz
     bool        filter_root_rot  = false;   // enabled by --butterworth-root-rotation
@@ -242,7 +242,8 @@ static void print_result(int person_idx, const fsb::MHRResult& r)
 // ---------------------------------------------------------------------------
 // MHR-70 joint names (matches fast_sam_3dbody_dump_csv.py / MHR70_NAMES)
 // ---------------------------------------------------------------------------
-static const char* KP_NAMES[70] = {
+static const char* KP_NAMES[70] =
+{
     "nose",                    //  0
     "left_eye",                //  1
     "right_eye",               //  2
@@ -319,7 +320,8 @@ static const char* KP_NAMES[70] = {
 // Skeleton edges for 2-D overlay  (MHR-70 joint indices)
 // ---------------------------------------------------------------------------
 // Colour key (by group): body=green, right-hand=blue, left-hand=red
-static const int BODY_EDGES[][2] = {
+static const int BODY_EDGES[][2] =
+{
     // Head
     {0,1},{0,2},{1,3},{2,4},
     // Shoulders
@@ -340,7 +342,8 @@ static const int BODY_EDGES[][2] = {
 static const int N_BODY_EDGES = (int)(sizeof(BODY_EDGES)/sizeof(BODY_EDGES[0]));
 
 // Right hand: finger chains root→tip  (wrist = 41)
-static const int RHAND_EDGES[][2] = {
+static const int RHAND_EDGES[][2] =
+{
     {41,24},{24,23},{23,22},{22,21},   // thumb
     {41,28},{28,27},{27,26},{26,25},   // index
     {41,32},{32,31},{31,30},{30,29},   // middle
@@ -350,7 +353,8 @@ static const int RHAND_EDGES[][2] = {
 static const int N_RHAND_EDGES = (int)(sizeof(RHAND_EDGES)/sizeof(RHAND_EDGES[0]));
 
 // Left hand: finger chains root→tip  (wrist = 62)
-static const int LHAND_EDGES[][2] = {
+static const int LHAND_EDGES[][2] =
+{
     {62,45},{45,44},{44,43},{43,42},
     {62,49},{49,48},{48,47},{47,46},
     {62,53},{53,52},{52,51},{51,50},
@@ -369,7 +373,8 @@ static void draw_skeleton_2d(cv::Mat& img, const std::vector<fsb::MHRResult>& re
         if (r.keypoints_2d.size() < 70*2) continue;
         const float* kp = r.keypoints_2d.data();
 
-        auto pt = [&](int j) -> cv::Point {
+        auto pt = [&](int j) -> cv::Point
+        {
             return { (int)kp[j*2], (int)kp[j*2+1] };
         };
 
@@ -393,10 +398,26 @@ static void draw_skeleton_2d(cv::Mat& img, const std::vector<fsb::MHRResult>& re
         {
             cv::Scalar col;
             int r_px;
-            if      (j <= 20)          { col = cv::Scalar(0,255,0);   r_px = 4; } // body
-            else if (j <= 41)          { col = cv::Scalar(255,100,0); r_px = 3; } // right hand
-            else if (j <= 62)          { col = cv::Scalar(0,100,255); r_px = 3; } // left hand
-            else                       { col = cv::Scalar(0,220,220); r_px = 4; } // extra
+            if      (j <= 20)
+            {
+                col = cv::Scalar(0,255,0);      // body
+                r_px = 4;
+            }
+            else if (j <= 41)
+            {
+                col = cv::Scalar(255,100,0);    // right hand
+                r_px = 3;
+            }
+            else if (j <= 62)
+            {
+                col = cv::Scalar(0,100,255);    // left hand
+                r_px = 3;
+            }
+            else
+            {
+                col = cv::Scalar(0,220,220);    // extra
+                r_px = 4;
+            }
             cv::circle(img, pt(j), r_px, col, -1, cv::LINE_AA);
         }
     }
@@ -575,7 +596,8 @@ int main(int argc, char** argv)
     // -----------------------------------------------------------------------
     // Butterworth filter state (one bank of filters per person slot)
     // -----------------------------------------------------------------------
-    struct PersonFilters {
+    struct PersonFilters
+    {
         std::array<ButterWorth, 70*3> kp3d{};
         std::array<ButterWorth, 133>  body_pose{};
         std::array<ButterWorth, 108>  hand_pose{};
@@ -592,7 +614,8 @@ int main(int argc, char** argv)
     // When the cutoff is at or above Nyquist we skip the filter (pass-through).
     const bool use_bw = c.butterworth && (c.bw_cutoff < bw_fps * 0.5f);
 
-    auto init_person_filters = [&](PersonFilters& pf) {
+    auto init_person_filters = [&](PersonFilters& pf)
+    {
         if (!use_bw) return;
         for (auto& f : pf.kp3d)      initButterWorth(&f, bw_fps, c.bw_cutoff);
         for (auto& f : pf.body_pose) initButterWorth(&f, bw_fps, c.bw_cutoff);
@@ -720,7 +743,11 @@ int main(int argc, char** argv)
                         // Wrap delta to [-π, π] so ±2π discontinuities don't trigger rejection
                         while (delta >  3.14159265359f) delta -= 2.0f * 3.14159265359f;
                         while (delta < -3.14159265359f) delta += 2.0f * 3.14159265359f;
-                        if (fabsf(delta) > max_rad) { reject = true; break; }
+                        if (fabsf(delta) > max_rad)
+                        {
+                            reject = true;
+                            break;
+                        }
                     }
                     if (reject)
                         r.global_rot = pf.prev_global_rot;  // hold — don't drift toward the flip

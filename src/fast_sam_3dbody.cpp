@@ -324,7 +324,12 @@ struct Pipeline::Impl
 
     // Keypoint mapping: sparse COO format for 70 MHR keypoints
     // Maps [vertices(18439) + joints(127)] → 70 keypoints
-    struct KpEntry { int32_t row; int32_t col; float val; };
+    struct KpEntry
+    {
+        int32_t row;
+        int32_t col;
+        float val;
+    };
     std::vector<KpEntry> kp_mapping;
 
     // Native C LBS (body_model.lbs) — loaded when body_model.onnx is unavailable
@@ -843,7 +848,8 @@ struct Pipeline::Impl
 
                 // Apply scale decode: scales = scale_mean + scale_params @ scale_comps
                 const float* scale_params = raw_i + 311;  // layout: 6+260+45=311
-                if (lbs_data->scale_mean && lbs_data->scale_comps) {
+                if (lbs_data->scale_mean && lbs_data->scale_comps)
+                {
                     const int ns = lbs_data->n_scale_out;  // 68
                     const int np = lbs_data->n_scale_pc;   // 28
                     for (int j = 0; j < ns; ++j) mp.data[136+j] = lbs_data->scale_mean[j];
@@ -948,7 +954,8 @@ struct Pipeline::Impl
                                 lbs_data ? lbs_data->hand_joint_idxs_left  : nullptr,
                                 lbs_data ? lbs_data->hand_joint_idxs_right : nullptr);
                 // Scale decode: scales = scale_mean + scale_params @ scale_comps
-                if (lbs_data && lbs_data->scale_mean && lbs_data->scale_comps) {
+                if (lbs_data && lbs_data->scale_mean && lbs_data->scale_comps)
+                {
                     const int ns = lbs_data->n_scale_out;
                     const int np = lbs_data->n_scale_pc;
                     for (int j = 0; j < ns; ++j) mp.data[136+j] = lbs_data->scale_mean[j];

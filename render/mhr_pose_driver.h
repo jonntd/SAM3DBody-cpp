@@ -30,9 +30,12 @@
 // during rendering, toggle the flip in the pipeline and retest.
 // ---------------------------------------------------------------------------
 static inline void mhr_update_mesh_vertices(struct TRI_Model   *model,
-                                             const float        *pred_vertices)
+        const float        *pred_vertices)
 {
-    if (!model || !model->vertices || !pred_vertices) { return; }
+    if (!model || !model->vertices || !pred_vertices)
+    {
+        return;
+    }
     memcpy(model->vertices, pred_vertices, MHR_VERTEX_FLOATS * sizeof(float));
 }
 
@@ -48,11 +51,11 @@ static inline void mhr_update_mesh_vertices(struct TRI_Model   *model,
 // img_w, img_h   : source image dimensions (pixels)
 // ---------------------------------------------------------------------------
 static inline void mhr_camera_matrices(float       out_proj[16],
-                                        float       out_view[16],
-                                        float       focal_length,
-                                        const float pred_cam_t[3],
-                                        int         img_w,
-                                        int         img_h)
+                                       float       out_view[16],
+                                       float       focal_length,
+                                       const float pred_cam_t[3],
+                                       int         img_w,
+                                       int         img_h)
 {
     const float near_plane = 0.01f;
     const float far_plane  = 100.0f;
@@ -65,10 +68,22 @@ static inline void mhr_camera_matrices(float       out_proj[16],
     float p32 = -2.0f * far_plane * near_plane / (far_plane - near_plane);
 
     // Column-major layout: out[col*4 + row]
-    out_proj[ 0] = p00;   out_proj[ 4] = 0.0f; out_proj[ 8] = 0.0f;  out_proj[12] = 0.0f;
-    out_proj[ 1] = 0.0f;  out_proj[ 5] = p11;  out_proj[ 9] = 0.0f;  out_proj[13] = 0.0f;
-    out_proj[ 2] = 0.0f;  out_proj[ 6] = 0.0f; out_proj[10] = p22;   out_proj[14] = p32;
-    out_proj[ 3] = 0.0f;  out_proj[ 7] = 0.0f; out_proj[11] = -1.0f; out_proj[15] = 0.0f;
+    out_proj[ 0] = p00;
+    out_proj[ 4] = 0.0f;
+    out_proj[ 8] = 0.0f;
+    out_proj[12] = 0.0f;
+    out_proj[ 1] = 0.0f;
+    out_proj[ 5] = p11;
+    out_proj[ 9] = 0.0f;
+    out_proj[13] = 0.0f;
+    out_proj[ 2] = 0.0f;
+    out_proj[ 6] = 0.0f;
+    out_proj[10] = p22;
+    out_proj[14] = p32;
+    out_proj[ 3] = 0.0f;
+    out_proj[ 7] = 0.0f;
+    out_proj[11] = -1.0f;
+    out_proj[15] = 0.0f;
 
     // Model-view matrix that replicates the Python pyrender pipeline:
     //   Python:   verts[Y,Z] *= -1  (LBS flip)  then
@@ -79,12 +94,20 @@ static inline void mhr_camera_matrices(float       out_proj[16],
     //             then translate by pred_cam_t matching "verts + pred_cam_t" in Python.
     //   Result:   v_view = (x+tx, -(−y)−ty, -(−z)−tz) = (x+tx, y−ty, z−tz)
     //             which matches pyrender camera space exactly.
-    out_view[ 0] = 1.0f;            out_view[ 4] = 0.0f;
-    out_view[ 8] = 0.0f;            out_view[12] =  pred_cam_t[0];
-    out_view[ 1] = 0.0f;            out_view[ 5] = -1.0f;
-    out_view[ 9] = 0.0f;            out_view[13] = -pred_cam_t[1];
-    out_view[ 2] = 0.0f;            out_view[ 6] = 0.0f;
-    out_view[10] = -1.0f;           out_view[14] = -pred_cam_t[2];
-    out_view[ 3] = 0.0f;            out_view[ 7] = 0.0f;
-    out_view[11] = 0.0f;            out_view[15] = 1.0f;
+    out_view[ 0] = 1.0f;
+    out_view[ 4] = 0.0f;
+    out_view[ 8] = 0.0f;
+    out_view[12] =  pred_cam_t[0];
+    out_view[ 1] = 0.0f;
+    out_view[ 5] = -1.0f;
+    out_view[ 9] = 0.0f;
+    out_view[13] = -pred_cam_t[1];
+    out_view[ 2] = 0.0f;
+    out_view[ 6] = 0.0f;
+    out_view[10] = -1.0f;
+    out_view[14] = -pred_cam_t[2];
+    out_view[ 3] = 0.0f;
+    out_view[ 7] = 0.0f;
+    out_view[11] = 0.0f;
+    out_view[15] = 1.0f;
 }
