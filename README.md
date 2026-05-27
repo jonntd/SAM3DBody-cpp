@@ -234,7 +234,8 @@ Full option list:
 --fps Z            Webcam capture framerate
 --butterworth      Apply Butterworth low-pass filter to MHR output vectors
 --bw-cutoff HZ     Butterworth cutoff frequency in Hz (default 6.0)
---rot-clamp DEG    Max global_rot change per frame in degrees (default 15; 0=off)
+--butterworth-root-rotation  Filter global_rot in quaternion space (1st-order SLERP-EMA, see "Output filtering")
+--rot-clamp DEG    Geodesic SLERP-step clamp on global_rot in degrees/frame (default 1; 0 = no clamp)
 --info             Print pipeline info and exit
 --help             Show this message
 ```
@@ -330,18 +331,50 @@ so all downstream consumers (CSV writer, BVH writer, display overlay) receive fi
 | `keypoints_3d` | 210 (70 joints × 3) | Butterworth | 3-D joint positions in metres |
 | `body_pose` | 133 | Butterworth | Body joint Euler angles |
 | `hand_pose` | 108 | Butterworth | Hand joint angles (left 54 + right 54) |
-| `global_rot` | 3 | Clamped-delta | Global orientation – Euler ZYX |
+| `global_rot` | 3 | **Quaternion SLERP-EMA** | Global orientation – filtered on SO(3), see below |
 | `pred_cam_t` | 3 | Butterworth | Camera / root translation |
 
-`global_rot` uses **wrap-corrected frame rejection** rather than Butterworth because
-Euler angles wrap at ±π — a Butterworth filter interpolates through the discontinuity
-and produces a visible flip.  Clamping the delta only delays the flip; if the model
-keeps predicting the flipped orientation the output still slowly drifts there.
+`global_rot` is **not** filtered with the scalar Butterworth path. Doing that
+on either the Euler triple or the four quaternion components fails for two
+reasons rooted in the geometry of rotations:
 
-Instead, the per-frame wrapped delta is compared to `--rot-clamp`. If any component
-exceeds the threshold the frame is **rejected** and the previous value is held.
-Genuine rotation (small delta per frame) passes through unchanged; flips and
-ambiguous orientation jumps (large delta) are frozen out entirely.
+1. **Euler wrap.** A rotation passing 180° jumps from +π to −π on the
+   axis storage, even though the actual orientation moved 0°. A per-axis
+   low-pass interpolates *linearly through that discontinuity*, briefly
+   flipping the whole body for ~τ seconds (the filter time-constant) every
+   time the model crosses a wrap or a gimbal-lock pole.
+2. **SO(3) is not a vector space.** Butterworth's "maximally-flat magnitude"
+   guarantee is a theorem about scalar LTI systems; it does not transfer to
+   rotations no matter which parametrisation you filter. Per-channel
+   smoothing of an Euler triple produces a composed rotation that is neither
+   the input nor a geometrically meaningful interpolant.
+
+So instead, when `--butterworth-root-rotation` is on, `global_rot` is filtered
+in **quaternion space** by a 1st-order SLERP-EMA (`QuatLPF` in
+`src/outputFiltering.h`):
+
+  1. Convert the input Euler triple to a unit quaternion.
+  2. **Hemisphere-correct** — if `dot(q_filt_prev, q_input) < 0`, negate
+     `q_input`. `q` and `−q` represent the same orientation, so this removes
+     the spurious 180° jump.
+  3. Compute the geodesic angle `θ = 2·acos(|dot|)` and pick a SLERP
+     fraction `t = min(α, --rot-clamp / θ)`. The `α` comes from the same
+     `--bw-cutoff` time-constant used elsewhere.
+  4. `q_filt ← SLERP(q_filt_prev, q_input_hemi, t)`, renormalise.
+  5. Convert back to Euler-ZYX for storage.
+
+This trades Butterworth's maximally-flat magnitude (a guarantee that does
+not apply to SO(3) anyway) for **geodesic monotonicity**, **no-flip
+continuity** across the wrap, and a single rotation-angle distance metric.
+It's 1st-order (−6 dB/octave) where the linear channels are 2nd-order, but
+that's the right trade-off for rotation — see the comment block in
+`outputFiltering.h` for the full rationale.
+
+`--rot-clamp` is now a geodesic outlier *clamp on the SLERP step*, not a
+frame-rejection threshold: rapid input motion gets attenuated to at most
+`rot-clamp` deg/frame in the output, never frozen. A single bad FFN frame
+with a 180° flip is therefore absorbed smoothly across a few frames rather
+than overwriting the orientation.
 
 ### Parameters
 
@@ -349,7 +382,8 @@ ambiguous orientation jumps (large delta) are frozen out entirely.
 |------|---------|-------|
 | `--butterworth` | off | Enable the filter |
 | `--bw-cutoff HZ` | `6.0` | Cutoff frequency in Hz. Lower = smoother but more temporal lag. Human motion typically stays below 6 Hz; use 3–4 Hz for very smooth output, 8–10 Hz to preserve fast gestures. |
-| `--rot-clamp DEG` | `15.0` | Per-frame rejection threshold for `global_rot` in degrees. If any Euler component's wrapped delta exceeds this, the frame is discarded and the previous value is held. Prevents flips without drifting toward them. Set to `0` to disable. |
+| `--butterworth-root-rotation` | off | Run the quaternion SLERP-EMA on `global_rot` (see above). Off by default because the very first input frame seeds the filter, so a bad initial prediction would otherwise lock the sequence to it. |
+| `--rot-clamp DEG` | `1.0` | Geodesic clamp on the SLERP step in **degrees per frame**. The filter's output never moves more than this many degrees of rotation per frame. With the new quaternion filter this *attenuates* fast input rather than rejecting it. Set to `0` to disable the clamp (pure EMA). |
 
 The sampling rate is taken from `--fps` when specified, otherwise 30 Hz is assumed.
 Each person slot maintains its own independent filter bank; new person slots are
@@ -358,9 +392,18 @@ measured value rather than zero.
 
 ### Implementation
 
-Implemented in `src/outputFiltering.h` — a header-only, dependency-free, C-compatible
-Butterworth filter. Each channel is a `ButterWorth` struct initialised with
-`initButterWorth(sensor, fs, fc)` and stepped with `filter(sensor, value)`.
+Implemented in `src/outputFiltering.h` — a header-only, dependency-free,
+C-compatible file containing two primitives:
+
+- `ButterWorth` — scalar 2nd-order IIR low-pass used for `keypoints_3d`,
+  `body_pose`, `hand_pose`, `pred_cam_t`. Initialised with
+  `initButterWorth(sensor, fs, fc)` and stepped with `filter(sensor, value)`.
+- `QuatLPF` — 1st-order SLERP-EMA on unit quaternions, used only for
+  `global_rot`. Initialised with `init_quat_lpf(&qf, fs, fc)` and stepped
+  with `filter_quat(&qf, in_quat, max_step_rad, out_quat)`. The header also
+  provides `euler_zyx_to_quat(rz, ry, rx, out)` and `quat_to_euler_zyx(in,
+  &rz, &ry, &rx)` since `global_rot` is stored in MHR's ZYX-intrinsic Euler
+  order.
 
 ---
 

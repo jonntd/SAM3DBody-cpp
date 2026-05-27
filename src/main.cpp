@@ -626,9 +626,12 @@ int main(int argc, char** argv)
         std::array<ButterWorth, 133>  body_pose{};
         std::array<ButterWorth, 108>  hand_pose{};
         std::array<ButterWorth, 3>    cam_t{};
-        // global_rot uses clamped-delta instead of Butterworth to avoid Euler wrap flipping
-        std::array<float, 3>          prev_global_rot{};
-        bool                          global_rot_init = false;
+        // global_rot uses a quaternion 1st-order SLERP-EMA instead of per-axis
+        // Butterworth.  Per-axis filtering on Euler triples interpolates linearly
+        // through the ±π wrap and through gimbal-lock, which manifests as visible
+        // body flips.  QuatLPF runs on the orientation directly: hemisphere-
+        // corrected SLERP, geodesic outlier clamp (--rot-clamp deg / frame).
+        QuatLPF                       root_rot{};
     };
     std::vector<PersonFilters> bw_filters;
     const float bw_fps = (c.cap_fps > 0.0) ? (float)c.cap_fps : 30.0f;
@@ -645,6 +648,10 @@ int main(int argc, char** argv)
         for (auto& f : pf.body_pose) initButterWorth(&f, bw_fps, c.bw_cutoff);
         for (auto& f : pf.hand_pose) initButterWorth(&f, bw_fps, c.bw_cutoff);
         for (auto& f : pf.cam_t)     initButterWorth(&f, bw_fps, c.bw_cutoff);
+        // Root-rotation quaternion filter uses the same cutoff frequency so the
+        // user can keep tuning a single --bw-cutoff knob.  Initialisation is
+        // lazy in filter_quat (first sample warms the state to the input).
+        init_quat_lpf(&pf.root_rot, bw_fps, c.bw_cutoff);
     };
 
     if (c.butterworth)
@@ -745,38 +752,23 @@ int main(int argc, char** argv)
                         r.hand_pose[k] = filter(&pf.hand_pose[k], r.hand_pose[k]);
                 }
 
-                // global_rot: wrap-corrected rejection to avoid Euler flip artifacts.
-                // Butterworth interpolates through the ±π discontinuity and causes flipping.
-                // Clamping the delta only delays the flip — the output still drifts there
-                // over many frames if the model keeps predicting the flipped orientation.
-                // Instead we REJECT frames where any component's wrapped delta exceeds the
-                // threshold, holding the previous value. Genuine rotation (small delta each
-                // frame) passes through unchanged; flips (large delta) are frozen out.
-                if (c.filter_root_rot && !pf.global_rot_init)
+                // global_rot: quaternion-domain 1st-order SLERP-EMA.  The Euler
+                // triple is stored ZYX-intrinsic ([rz, ry, rx]) so we convert
+                // via the matching helper, filter on the orientation directly,
+                // then write back in the same order.  --rot-clamp is now a
+                // geodesic outlier clamp on the SLERP step (deg / frame); 0
+                // disables it (pure EMA).
+                if (c.filter_root_rot)
                 {
-                    pf.prev_global_rot = r.global_rot;
-                    pf.global_rot_init = true;
-                }
-                else if (c.filter_root_rot && c.rot_clamp > 0.0f)
-                {
-                    const float max_rad = c.rot_clamp * (3.14159265359f / 180.0f);
-                    bool reject = false;
-                    for (int k = 0; k < 3; ++k)
-                    {
-                        float delta = r.global_rot[k] - pf.prev_global_rot[k];
-                        // Wrap delta to [-π, π] so ±2π discontinuities don't trigger rejection
-                        while (delta >  3.14159265359f) delta -= 2.0f * 3.14159265359f;
-                        while (delta < -3.14159265359f) delta += 2.0f * 3.14159265359f;
-                        if (fabsf(delta) > max_rad)
-                        {
-                            reject = true;
-                            break;
-                        }
-                    }
-                    if (reject)
-                        r.global_rot = pf.prev_global_rot;  // hold — don't drift toward the flip
-                    else
-                        pf.prev_global_rot = r.global_rot;  // accept and advance
+                    float in_q[4], out_q[4];
+                    euler_zyx_to_quat(r.global_rot[0], r.global_rot[1],
+                                      r.global_rot[2], in_q);
+                    float max_step_rad = (c.rot_clamp > 0.0f)
+                        ? c.rot_clamp * (3.14159265359f / 180.0f) : 0.0f;
+                    filter_quat(&pf.root_rot, in_q, max_step_rad, out_q);
+                    quat_to_euler_zyx(out_q, &r.global_rot[0],
+                                              &r.global_rot[1],
+                                              &r.global_rot[2]);
                 }
 
                 if (use_bw)

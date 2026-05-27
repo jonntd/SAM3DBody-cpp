@@ -21,6 +21,7 @@ extern "C" {
 
 #include "../src/fast_sam_3dbody.h"
 #include "../src/preprocess.hpp"   // for fsb::apply_hand_pose
+#include "../src/outputFiltering.h" // for QuatLPF + euler_zyx_to_quat helpers
 #include "mhr_pose_driver.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -598,9 +599,12 @@ int main(int argc, const char** argv) {
         printf("[BW] cutoff=%.1f Hz  sample=%.1f Hz  approx lag=%.0f ms (%.1f frames)\n",
                bw_cutoff, video_fps, lag_ms, lag_ms * video_fps / 1000.f);
     }
-    // global_rot rejection state (same wrap-corrected rejection as fast_sam_3dbody_run)
-    std::array<float, 3> prev_global_rot{};
-    bool global_rot_init = false;
+    // global_rot quaternion 1st-order SLERP-EMA — same QuatLPF primitive as
+    // fast_sam_3dbody_run.  Filter directly on orientation (no Euler-wrap or
+    // gimbal-lock artifacts); --rot-clamp is the geodesic SLERP-step clamp.
+    QuatLPF root_rot_filter{};
+    if (use_butterworth && filter_root_rot)
+        init_quat_lpf(&root_rot_filter, video_fps, bw_cutoff);
 
     // Empty VAO for the quad (we use gl_VertexID in the vertex shader)
     GLuint quad_vao;
@@ -661,26 +665,18 @@ int main(int argc, const char** argv) {
             bw_mp.apply(results[0].mhr_model_params.data(), 204);
             bw_cam.apply(results[0].pred_cam_t.data(), 3);
 
-            // global_rot: wrap-corrected rejection — only when --butterworth-root-rotation
-            // is passed. Off by default: first-frame lock-in to a bad prediction would
-            // freeze the entire sequence at the wrong orientation.
-            if (filter_root_rot && rot_clamp_deg > 0.0f) {
+            // global_rot: quaternion-domain SLERP-EMA — only when
+            // --butterworth-root-rotation is passed.  --rot-clamp is a
+            // geodesic outlier clamp on the SLERP step in deg / frame; 0
+            // disables it (pure EMA).
+            if (filter_root_rot) {
                 auto& gr = results[0].global_rot;
-                if (!global_rot_init) {
-                    prev_global_rot = gr;
-                    global_rot_init = true;
-                } else {
-                    const float max_rad = rot_clamp_deg * (3.14159265359f / 180.0f);
-                    bool reject = false;
-                    for (int k = 0; k < 3; ++k) {
-                        float delta = gr[k] - prev_global_rot[k];
-                        while (delta >  3.14159265359f) delta -= 2.0f * 3.14159265359f;
-                        while (delta < -3.14159265359f) delta += 2.0f * 3.14159265359f;
-                        if (fabsf(delta) > max_rad) { reject = true; break; }
-                    }
-                    if (reject) gr = prev_global_rot;
-                    else        prev_global_rot = gr;
-                }
+                float in_q[4], out_q[4];
+                euler_zyx_to_quat(gr[0], gr[1], gr[2], in_q);
+                float max_step_rad = (rot_clamp_deg > 0.0f)
+                    ? rot_clamp_deg * (3.14159265359f / 180.0f) : 0.0f;
+                filter_quat(&root_rot_filter, in_q, max_step_rad, out_q);
+                quat_to_euler_zyx(out_q, &gr[0], &gr[1], &gr[2]);
             }
         }
 
