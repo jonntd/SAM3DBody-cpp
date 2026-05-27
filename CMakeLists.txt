@@ -147,7 +147,7 @@ endif()
 # ---------------------------------------------------------------------------
 # OpenCV
 # ---------------------------------------------------------------------------
-find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui dnn)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui dnn video)
 message(STATUS "OpenCV ${OpenCV_VERSION}")
 
 set(GRAPHICS_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/GraphicsEngine)
@@ -266,6 +266,34 @@ else()
         $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -O2>
     )
 endif()
+
+# ---------------------------------------------------------------------------
+# offline_sam_3dbody_render  executable
+#
+# Multi-pass offline BVH extractor.  Same fsb::Pipeline + BVHWriter as the
+# live binaries; no OpenGL dependency (this tool never opens a window).
+# Only the per-pass orchestration code is unique to this target.
+# ---------------------------------------------------------------------------
+add_executable(offline_sam_3dbody_render
+    render/offline_sam_3dbody_render.cpp
+)
+
+target_include_directories(offline_sam_3dbody_render PRIVATE
+    src
+    ${GRAPHICS_ENGINE_DIR}
+    ${ORT_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(offline_sam_3dbody_render PRIVATE
+    fast_sam_3dbody
+    ${OpenCV_LIBS}
+    m
+)
+
+target_compile_options(offline_sam_3dbody_render PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
+)
 
 # ---------------------------------------------------------------------------
 # Summary

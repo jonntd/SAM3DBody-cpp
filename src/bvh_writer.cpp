@@ -672,6 +672,61 @@ void BVHWriter::write_frame(const std::vector<fsb::MHRResult>& results)
     ++session_frames_;
 }
 
+// ─── BVHWriter::write_frame_external ───────────────────────────────────────
+//
+// Multi-person frame write driven by caller-supplied track IDs.  Used by the
+// offline binary, which runs a globally-optimal Hungarian tracker over the
+// whole video and decides identities up front.
+//
+// Differences from write_frame:
+//   - No internal tracker call (no assign_tracks, no tracks_ touching).
+//   - No bbox-validity filter (caller has already vetted detections).
+//   - Caller decides which previously-seen tracks deserve a continuation pad
+//     this frame via the pad_ids list.  Tracks that the caller stops mentioning
+//     simply stop accumulating motion samples — the writer doesn't auto-retire.
+
+void BVHWriter::write_frame_external(const std::vector<fsb::MHRResult>& results,
+                                     const std::vector<int>&            track_ids,
+                                     const std::vector<int>&            pad_ids)
+{
+    if (!mc_ || !lbs_) return;
+    if (results.size() != track_ids.size())
+    {
+        fprintf(stderr, "[BVHWriter] write_frame_external: results / track_ids "
+                        "size mismatch (%zu vs %zu)\n",
+                results.size(), track_ids.size());
+        return;
+    }
+
+    // Append a real motion row per detection ──────────────────────────────────
+    for (size_t d = 0; d < results.size(); ++d)
+    {
+        int id = track_ids[d];
+        if (id < 0) continue;
+        PerPerson& p = people_[id];
+        if (p.id < 0)
+        {
+            p.id          = id;
+            p.frame_count = 0;
+            p.bone_samples.assign(slots_.size(), std::vector<float>{});
+        }
+        append_frame_for(p, results[d]);
+        // Keep next_track_id_ ahead of any externally-assigned ID so a later
+        // call to the internal tracker (in mixed-mode use) wouldn't reuse it.
+        if (id >= next_track_id_) next_track_id_ = id + 1;
+    }
+
+    // Continuation pads for tracks the caller wants to keep alive ─────────────
+    for (int id : pad_ids)
+    {
+        auto it = people_.find(id);
+        if (it == people_.end()) continue;
+        pad_continuation_frame(it->second);
+    }
+
+    ++session_frames_;
+}
+
 // ─── Close-time: rewrite OFFSETs, then dump one file per person ────────────
 
 void BVHWriter::rewrite_offsets_for(PerPerson& p)

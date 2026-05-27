@@ -431,6 +431,14 @@ int main(int argc, const char** argv) {
     int         save_frame_idx     = 0;
     std::string bvh_path           = "";
     std::string bvh_template       = "";
+    // --headless creates a GLX Pbuffer (offscreen surface) instead of a
+    // visible X11 window.  Used by scripts/video.sh in --save mode so the
+    // long-running render can't be killed by an accidental window close,
+    // the screen-saver, or any window-manager interaction with a stale
+    // long-lived window.  The GL context is identical either way; only
+    // the surface is offscreen, so glReadPixels (used by --save-frames)
+    // still produces the same image.
+    bool        headless           = false;
     bool        bvh_body_shape_change          = true;
     bool        bvh_hand_shape_change          = true;
     bool        bvh_compensate_finger_endsites = true;
@@ -478,6 +486,7 @@ int main(int argc, const char** argv) {
         if (!strcmp(argv[i], "--no-bvh-body-shape-change")) { bvh_body_shape_change = false; continue; }
         if (!strcmp(argv[i], "--no-bvh-hand-shape-change")) { bvh_hand_shape_change = false; continue; }
         if (!strcmp(argv[i], "--bvh-raw-fingers"))          { bvh_compensate_finger_endsites = false; continue; }
+        if (!strcmp(argv[i], "--headless"))                 { headless = true; continue; }
     }
 
     // ── Pipeline ─────────────────────────────────────────────────────────────
@@ -531,10 +540,18 @@ int main(int argc, const char** argv) {
     int W = (render_w > 0) ? render_w : frame_w;
     int H = (render_h > 0) ? render_h : frame_h;
 
-    // ── GLX window ────────────────────────────────────────────────────────────
-    if (!start_glx3_stuff(W, H, 1, argc, argv)) {
-        fprintf(stderr, "Failed to start GLX window\n"); return 1;
+    // ── GLX surface ───────────────────────────────────────────────────────────
+    // viewWindow=1 → normal visible X11 window
+    // viewWindow=0 → offscreen GLX Pbuffer (no XMapWindow, no event source the
+    //                user can interact with).  Pbuffers were the standard
+    //                pre-EGL way to get offscreen GL on Linux/X11 and the
+    //                fixed-pipeline glReadPixels we use to save frames works
+    //                identically on them.
+    if (!start_glx3_stuff(W, H, headless ? 0 : 1, argc, argv)) {
+        fprintf(stderr, "Failed to start GLX %s\n",
+                headless ? "Pbuffer" : "window"); return 1;
     }
+    if (headless) printf("[headless] running offscreen — no GUI window\n");
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
         fprintf(stderr, "GLEW init failed\n"); return 1;

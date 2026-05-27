@@ -88,16 +88,61 @@ TMPFRAMES=$(mktemp -d /tmp/fsb_frames_XXXXXX)
 FRAME_PREFIX="${TMPFRAMES}/colorFrame_0_"
 
 # Run the renderer; it will save every frame as colorFrame_0_NNNNN.jpg.
+#
+# --headless is forced in --save mode so the long-running render uses an
+# offscreen GLX Pbuffer instead of a visible X11 window.  Without it, a
+# user (or screen-saver, or session lock) closing the window mid-render
+# would terminate the renderer with whatever JPEGs had been written so
+# far — and the encode step below would happily produce a frozen-frame
+# mp4 from the partial output.  This was the cause of the
+# "matrix_rendered.mp4 freezes at 0:17 with correct audio length"
+# regression: the renderer was killed before reaching the end and the
+# encode silently used the truncated frame set.
+HEADLESS_ARG=("--headless")
 if [ "$HAS_FROM" -eq 1 ]; then
-    "${FIXED[@]}" "${FORWARD_ARGS[@]}" --save-frames "$FRAME_PREFIX"
+    "${FIXED[@]}" "${FORWARD_ARGS[@]}" "${HEADLESS_ARG[@]}" --save-frames "$FRAME_PREFIX"
 else
-    "${FIXED[@]}" --from "${FORWARD_ARGS[@]}" --save-frames "$FRAME_PREFIX"
+    "${FIXED[@]}" --from "${FORWARD_ARGS[@]}" "${HEADLESS_ARG[@]}" --save-frames "$FRAME_PREFIX"
 fi
 RENDER_EXIT=$?
-if [ $RENDER_EXIT -ne 0 ]; then
-    echo "Renderer exited with code $RENDER_EXIT — aborting encode." >&2
+
+# ── Validate the rendered frame count ─────────────────────────────────────────
+# The exit code alone is unreliable: the renderer is known to raise harmless
+# late-stage cleanup errors (e.g. Pbuffer-mode XDestroyWindow → BadWindow)
+# that surface as a non-zero exit AFTER every frame has been written.  We'd
+# rather encode-and-warn in that case than throw away a complete frame set.
+#
+# So the abort rule is: only refuse to encode when the JPEGs themselves are
+# short of what the source video has.  When reading from a video file the
+# expected count is ffprobe nb_frames; webcams have no fixed length so we
+# skip the check entirely and trust the renderer's exit code there.
+ACTUAL=$(ls "${FRAME_PREFIX}"*.jpg 2>/dev/null | wc -l)
+ENCODE_OK=1
+if [ -n "$FROM_SRC" ] && [ -f "$FROM_SRC" ]; then
+    EXPECTED=$(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=nb_frames -of csv=p=0 "$FROM_SRC" 2>/dev/null)
+    if [[ "$EXPECTED" =~ ^[0-9]+$ ]] && [ "$EXPECTED" -gt 0 ]; then
+        # Tolerate small slack — some containers report off-by-one nb_frames,
+        # and the renderer's probe consumes 1 frame before the loop starts.
+        MIN_OK=$(( EXPECTED - 5 ))
+        if [ "$ACTUAL" -lt "$MIN_OK" ]; then
+            echo "Renderer wrote $ACTUAL frames, source has $EXPECTED — aborting encode." >&2
+            echo "(The renderer was killed mid-run.  Re-run; if it persists, try --skip-body.)" >&2
+            ENCODE_OK=0
+        fi
+    fi
+elif [ $RENDER_EXIT -ne 0 ]; then
+    # Webcam / live source — defer to the renderer's exit code.
+    ENCODE_OK=0
+fi
+
+if [ "$ENCODE_OK" -ne 1 ]; then
     rm -rf "$TMPFRAMES"
-    exit $RENDER_EXIT
+    exit ${RENDER_EXIT:-2}
+fi
+
+if [ $RENDER_EXIT -ne 0 ]; then
+    echo "Renderer exited with code $RENDER_EXIT but all $ACTUAL frames are present — encoding anyway." >&2
 fi
 
 # ── Probe the source for frame rate ──────────────────────────────────────────

@@ -36,6 +36,25 @@ public:
               bool               compensate_finger_endsites = true);
 
     void write_frame(const std::vector<fsb::MHRResult>& results);
+
+    // Same as write_frame, but the caller supplies the track IDs (e.g. from an
+    // offline globally-optimal tracker) instead of relying on the internal
+    // greedy IoU tracker.
+    //
+    //   results[i]    — i'th detection's MHR output
+    //   track_ids[i]  — its track identity (must be ≥ 0)
+    //   pad_ids       — IDs that already exist in this writer but were NOT
+    //                   detected this frame and should continue with their
+    //                   previous pose (caller controls track lifespan)
+    //
+    // The internal IoU tracker is bypassed entirely.  bbox-validity filtering
+    // is also skipped — the caller has already decided which detections are
+    // real.  session_frames_ increments by exactly one per call (matching
+    // write_frame semantics).
+    void write_frame_external(const std::vector<fsb::MHRResult>& results,
+                              const std::vector<int>& track_ids,
+                              const std::vector<int>& pad_ids = {});
+
     void close();
 
     bool is_open()           const { return mc_ != nullptr; }

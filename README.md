@@ -126,7 +126,7 @@ SAM3DBody-cpp/
 │   ├── fast_sam_3dbody_render.cpp    OpenGL mesh overlay renderer
 │   └── mhr_pose_driver.h             LBS driver (camera matrices, vertex update)
 ├── scripts/
-│   └── build.sh / setup.sh / webcam.sh / video.sh
+│   └── build.sh / setup.sh / webcam.sh / video.sh / offline_video.sh
 └── src/
     ├── fast_sam_3dbody.h             C++ public API
     ├── fast_sam_3dbody.cpp           Pipeline implementation
@@ -558,6 +558,137 @@ Inside Blender:
 The plugin auto-handles naming variants between the BVH skeleton (`body.bvh`,
 which is what we export against) and the MakeHuman armature, so the
 `p_<id>.bvh` files coming out of `--bvh` work without any further renaming.
+
+---
+
+## Offline multi-pass BVH extraction (`offline_sam_3dbody_render`)
+
+`fast_sam_3dbody_run` and `fast_sam_3dbody_render` are **online / causal**
+binaries: they process frame N before frame N+1 has been decoded, so every
+filter and every tracker can only look backwards.  That works fine for live
+webcam input, but for *video files on disk* it leaves quality on the table.
+
+`offline_sam_3dbody_render` is a separate executable that reads the whole
+clip first and then runs five passes over it.  It produces the same
+multi-person BVH files as `--bvh` does in the live binaries, but with
+smoother motion and more stable identities.
+
+```bash
+# Most common invocation
+./scripts/offline_video.sh --from matrix.mp4 --bvh ./mtx.bvh \
+                           --interpolate-jitter
+
+# → mtx_0.bvh, mtx_1.bvh, …, one per tracked identity
+```
+
+### What each pass does
+
+1. **Inference + scene detection** — decode the full video, run YOLO +
+   backbone + decoder + MHR per frame, throw away `pred_vertices` immediately
+   to keep memory bounded.  In parallel we run a scene-change detector
+   that votes on three signals each frame (any two ⇒ cut):
+
+   - **(A)** Lucas-Kanade optical-flow tracking of background-only corners
+     (41×41 window, 5 pyramid levels — sized for action footage) from the
+     previous frame.  Cut signal fires when the LK success rate drops
+     below `--scene-success-threshold` (default 0.50).  The "background"
+     is everything outside the dilated YOLO bboxes — same mask the user
+     asked for, just produced from bbox geometry instead of a GL shader.
+   - **(B)** HSV-histogram correlation of the same background.  Cut signal
+     fires when the correlation drops below 0.50.
+   - **(C)** Person-set discontinuity.  Cut signal fires when either the
+     detection count changes by ≥ 2 (or doubles/halves), or the median
+     nearest-prev-detection 3D distance exceeds 1 m.
+
+   The voting fuses the failure modes of each individual heuristic, and a
+   4-frame debounce throws out tracker-artefact bursts.  Scene cuts then
+   gate Pass 3 and Pass 4.
+
+2. **Global identity tracking** — greedy per-frame matching by
+   `cost = (1 − IoU) + λ · ‖Δpred_cam_t‖_metres`, then a post-hoc merge
+   step that splices track-ending pairs (`A` ends, `B` starts within
+   `--track-merge-frames` and `--track-merge-cm` of the same 3D location)
+   under `A`'s id.  This is what catches "person hidden behind a pillar
+   for 30 frames" — the live tracker would have retired and re-acquired
+   them as two separate IDs.  Tracks with fewer than `--min-track-frames`
+   detections are pruned at the end (default 8 — drops YOLO single-frame
+   false positives).
+
+3. **Jitter interpolation** *(opt-in via `--interpolate-jitter`)* — flag
+   frames whose 3D keypoint velocity exceeds `--jitter-threshold-cm`
+   (default 30 cm/frame), then replace each flagged frame by a linear /
+   SLERP interpolation of its non-flagged neighbours.  Scene cuts are
+   respected — a "200 cm/frame velocity" right at a cut is real motion
+   between shots, not noise, and we never bridge across a cut.
+
+4. **Zero-phase smoothing** — same Butterworth (for linear channels) and
+   QuatLPF (for `global_rot`) as the live binaries, but run as
+   `filtfilt`: forward pass, reverse, forward pass, reverse.  The phase
+   shift of the two passes cancels exactly, so the smoothed output has
+   **zero temporal lag**.  Each track is split at scene cuts and each
+   segment is filtered independently — we never blend pose data from
+   shot A into shot B.
+
+5. **BVH export** — feed the smoothed + interpolated detections, with
+   the globally-determined track IDs, into
+   `BVHWriter::write_frame_external`.  The writer is exactly the one
+   used by the live binaries; only the source of the IDs differs.
+
+### Reusing code from the live binaries
+
+`fsb::Pipeline`, `BVHWriter`, `ButterWorth`, `QuatLPF`, `euler_zyx_to_quat`,
+`fsb::apply_hand_pose` — all unchanged, called directly.  The new code in
+`render/offline_sam_3dbody_render.cpp` is **only** the per-pass
+orchestration (≈ 700 lines, every function with a top-of-block comment
+explaining why it does what it does), the scene detector, and one new
+public method on `BVHWriter` (`write_frame_external`) that takes
+caller-supplied track IDs instead of running its internal greedy tracker.
+
+### Restrictions
+
+The binary refuses webcam indices, RTSP URLs, and single still images;
+those are an online-binary workflow.  `--from` must be a path to a video
+file with at least a handful of frames.
+
+### Full option list (offline-only flags)
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--smoothing zero-phase\|forward\|off` | `zero-phase` | Forward+backward `filtfilt` (no lag) vs the live binaries' forward-only filter vs no smoothing |
+| `--interpolate-jitter` | off | Enable Pass 3 |
+| `--jitter-threshold-cm CM` | `30.0` | Per-frame 3D-keypoint velocity above which a frame is replaced by an interpolation of its neighbours |
+| `--track-merge-frames N` | `30` | Maximum gap (in frames) for the post-hoc merge in Pass 2 |
+| `--track-merge-cm CM` | `50.0` | Maximum 3D root distance (cm) for the post-hoc merge |
+| `--min-track-frames N` | `8` | Drop tracks with fewer than this many detections (YOLO false-positive filter) |
+| `--no-scene-detection` | — | Treat the whole clip as one continuous shot (skips Pass-1 OpenCV work and prevents any false-positive cuts from interrupting the smoothing) |
+| `--static-scene` | — | Intent-named alias of `--no-scene-detection`; use when you know the source has no cuts (one-take dance clip, lab recording, …) |
+| `--scene-success-threshold T` | `0.50` | LK-flow success-rate threshold (signal A) |
+| `--scene-min-corners N` | `30` | Re-seed bg corners when fewer than this many remain |
+
+All `--bvh-*` flags and `--rot-clamp`, `--bw-cutoff` documented above
+work identically here.
+
+### Wrapper script
+
+`scripts/offline_video.sh` is the shell entry point.  It mirrors the
+`scripts/video.sh` interface (same model paths, same flag forwarding)
+and additionally accepts the offline-only flags above.  Usage:
+
+```bash
+./scripts/offline_video.sh --from clip.mp4 --bvh out.bvh [...]
+```
+
+Passing `--save [vis.mp4]` *additionally* runs `scripts/video.sh` after
+the offline pass to produce a visualisation mp4 of the per-frame
+inference.  The two outputs are independent — the BVH reflects the
+offline-only tracking + smoothing + jitter handling, while the rendered
+mp4 is whatever the live renderer would produce on the same clip — so
+this is a quick way to get a "what was the input?" video alongside the
+"what was the cleaned-up output?" BVH:
+
+```bash
+./scripts/offline_video.sh --from matrix.mp4 --bvh mtx.bvh --save vis.mp4
+```
 
 ---
 

@@ -18,6 +18,16 @@ extern int handleUserInput(int key, int pressed, int x, int y);
 extern int windowSizeUpdated(int width, int height);
 
 GLXDrawable whatToSwap=0;
+/* Set to 1 by the Pbuffer (offscreen) code path in start_glx3_stuff(); stays 0
+ * in the windowed path.  stop_glx3_stuff() uses this to skip XDestroyWindow /
+ * XFreeColormap, which fail with BadWindow in Pbuffer mode because `win` and
+ * `cmap` were never initialised — and the failure happens at the very END of
+ * a successful run, after every frame has been written, so it would propagate
+ * a non-zero exit code that scripts/video.sh interprets as "renderer died,
+ * abort the encode".  Concretely: matrix.mp4 saved all 2182 JPEGs, then this
+ * cleanup raised an X BadWindow error, the process exited 1, and the script
+ * discarded the frames. */
+static int glx3_is_pbuffer = 0;
 GLboolean  doubleBufferGLX3 = GL_TRUE;
 //static int dblBuf[]  = {GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None};
 
@@ -349,6 +359,7 @@ int start_glx3_stuff(int WIDTH,int HEIGHT,int viewWindow,int argc,const char **a
     if (viewWindow==0)
     {
         fprintf(stderr,"start_glx3_stuff with no window..\n");
+        glx3_is_pbuffer = 1;
         display = XOpenDisplay(NULL);
         if (!display)
         {
@@ -564,8 +575,18 @@ int stop_glx3_stuff()
     glXMakeCurrent( display, 0, 0 );
     glXDestroyContext( display, ctx );
 
-    XDestroyWindow( display, win );
-    XFreeColormap( display, cmap );
+    /* In Pbuffer (headless) mode `win` and `cmap` are uninitialised — the
+     * windowed code path never ran.  Calling XDestroyWindow / XFreeColormap
+     * with a zero XID raises BadWindow / BadColormap.  Those errors are
+     * harmless (cleanup is final-step) but they bubble up as a non-zero
+     * exit status that scripts/video.sh interprets as "renderer crashed,
+     * discard the JPEGs" — exactly the bug we're fixing here.  The Pbuffer
+     * itself is owned by the GLXFBConfig and gets released when the
+     * display is closed, so there's nothing else to free.  */
+    if (!glx3_is_pbuffer) {
+        XDestroyWindow( display, win );
+        XFreeColormap( display, cmap );
+    }
     XCloseDisplay( display );
     return 1;
 }
