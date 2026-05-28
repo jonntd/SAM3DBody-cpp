@@ -55,6 +55,32 @@ unzip SAM3DBody-cpp-onnx-models.zip
 
 ## Pipeline
 
+This is **not** 2D-to-3D lifting. The network directly regresses 3D body model
+parameters from image features — no depth sensor, no floor plane, no stereo.
+
+Starting from a raw image the pipeline does:
+
+1. **YOLO** detects person bounding boxes.
+2. Each crop is fed to a **DINOv2-ViT-H backbone** producing a `[1280, 32, 32]`
+   spatial feature map.
+3. A **transformer decoder** (conditioned on the crop's ray directions and
+   focal length) compresses that feature map into a 1024-dim pose token.
+4. Two small **FFN heads** (run on CPU via ggml) decode the token into:
+   - **519 pose parameters** — global orientation (6D continuous rotation),
+     per-joint Euler angles for 127 joints, SMPL-like shape betas (45),
+     hand pose (108), and face expression (72).
+   - **3 camera parameters** `[scale, tx, ty]` → world-space translation
+     `[tx, ty, tz]`.
+5. Those parameters drive **linear blend skinning (LBS)** over 18 439 vertices
+   to produce the full body mesh and 70 keypoints.
+
+The focal length is estimated from the image diagonal and baked into the
+decoder's conditioning input, so the network learns to associate apparent body
+size in the crop with metric depth — the same monocular depth-from-body-proportions
+approach used by SMPL/HMR-family models. The body is placed in **camera space**
+via the predicted root translation; floor-plane recovery is a downstream step if
+needed.
+
 ```
 BGR image
   │
