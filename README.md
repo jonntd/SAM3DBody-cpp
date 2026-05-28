@@ -53,16 +53,15 @@ unzip SAM3DBody-cpp-onnx-models.zip
 ### Without a CUDA GPU (CPU-only)
 
 The standard `backbone.onnx` is exported in BFloat16 and **requires a CUDA GPU** — it will not load on the ORT CPU execution provider.
-A float32 CPU-compatible backbone is available as a separate download from the same HuggingFace repo:
-
-**[https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/tree/main](https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/tree/main)**
+A float32 CPU-compatible backbone is available as a separate download from the same HuggingFace repo.
+ 
 
 Download these two files and place them alongside the rest of the models in `onnx/`:
 
-| File | Size | Description |
-|------|------|-------------|
-| `backbone_fp32.onnx` | ~1 MB | Graph (references external data) |
-| `backbone_fp32.onnx.data` | ~3.2 GB | Float32 weights — no BF16, CPU EP compatible |
+| File | Size | Description | Link |
+|------|------|-------------| ---- |
+| `backbone_fp32.onnx` | ~1 MB | Graph (references external data) | [Link](https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/blob/main/backbone_fp32.onnx) |
+| `backbone_fp32.onnx.data` | ~3.2 GB | Float32 weights — no BF16, CPU EP compatible | [Link](https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/blob/main/backbone_fp32.data) |
 
 Then run with `--backbone backbone_fp32.onnx --cuda -1`:
 
