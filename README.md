@@ -809,7 +809,20 @@ If you use this software repository in your research or work, please cite:
 }
 ```
 
-as well as the Meta AI team behind the awesome paper that proposes the SAM 3D Body method.
+as well as the Fast SAM 3D Body work which was the inspiration creating the cpp version
+
+
+```bibtex
+@article{yang2026fastsam3dbody,
+title={Fast SAM 3D Body: Accelerating SAM 3D Body for Real-Time Full-Body Human Mesh Recovery},
+author={Yang, Timing and He, Sicheng and Jing, Hongyi and Yang, Jiawei and Liu, Zhijian and Zou, Chuhang and Wang, Yue},
+journal={arXiv preprint arXiv:2603.15603},
+year={2026}
+}
+```
+
+
+and of course the Meta AI team behind the awesome paper that proposes the SAM 3D Body method.
 
 ```bibtex
 @article{yang2026sam3dbody,
