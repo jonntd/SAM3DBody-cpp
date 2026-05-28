@@ -6,18 +6,34 @@ The backbone is a DINOv2-ViT-H/14 variant (~4.8 GB FP32 with external data).
 INT8 quantization cuts it to ~2.4 GB and speeds up CPU MatMul by ~1.5–2×.
 CUDA Tensor Core acceleration (sm_75+, Turing+) also benefits from int8 weights.
 
+Expected results on ORT CUDA EP
+--------------------------------
+  ORT's CUDA EP implements MatMulInteger by dequantizing INT8 weights to FP32
+  at runtime, then running a standard FP32 GEMM.  Inference speed is therefore
+  unchanged vs FP32 (~46 ms/frame on tested hardware).
+
+  The concrete benefit is a 3× reduction in model size:
+    backbone.onnx + .data  →  4.8 GB FP32
+    backbone_int8.onnx + .data  →  1.6 GB INT8
+  This frees ~3 GB of VRAM per inference session, leaving more headroom for
+  larger batches or other resident models.
+
+  For real INT8 Tensor Core speedup on GPU, use TensorRT EP (--trt flag) with
+  INT8 calibration — that requires tensorrt Python package and is a separate
+  workflow.  This script produces the model file needed as a starting point.
+
 Modes
 -----
   dynamic (default)
     Quantizes weight tensors offline — no calibration images needed.
-    Only constant MatMul B-operands (linear projection weights) are quantized;
-    dynamic attention scores (Q@K^T) are left in FP32 to preserve accuracy.
-    Run time: ~5–15 min on CPU, ~2–5 min with GPU ORT.
+    Only MatMul ops quantized (Conv excluded: ConvInteger not in ORT CUDA EP).
+    Only constant B-operands (projection weights); attention Q@K^T stays FP32.
+    Run time: ~5–15 min.
 
   static
     Quantizes both weights AND activations using representative crops.
     Requires --calib-dir (real images) or uses synthetic random crops.
-    Better throughput, but accuracy depends on calibration quality.
+    Better accuracy preservation vs dynamic; same CUDA EP speed caveat applies.
     Run time: substantially longer due to per-sample inference passes.
 
 Usage
@@ -226,20 +242,29 @@ def main():
 
     t0 = time.time()
 
+    # Restrict to MatMul only.  ORT's CUDA EP implements MatMulInteger but NOT
+    # ConvInteger, so quantizing Conv ops (e.g. patch-embed) makes the model
+    # fail to load on CUDA.  ViT compute is dominated by MatMul anyway — the
+    # patch-embed Conv is negligible and not worth the compatibility headache.
+    CUDA_SAFE_OPS = ["MatMul"]
+
     if args.mode == "dynamic":
         print("\nRunning dynamic quantization …")
-        print("  (quantizes constant MatMul B-operands only; attention scores stay FP32)")
+        print("  op types:  MatMul only (ConvInteger excluded — not in ORT CUDA EP)")
+        print("  weights:   constant B-operands only (attention Q@K^T stays FP32)")
         quantize_dynamic(
             in_path,
             out_path,
+            op_types_to_quantize=CUDA_SAFE_OPS,
             weight_type=QuantType.QInt8,
             use_external_data_format=has_ext_data,
-            # MatMulConstBOnly=True: skip dynamic attention score MatMuls (Q@K^T).
-            # This is critical for ViT accuracy — only project-weight MatMuls are quantized.
+            # MatMulConstBOnly: only quantize weight matrices (constant B), not
+            # runtime activations such as attention scores (Q@K^T).
             extra_options={"MatMulConstBOnly": True},
         )
     else:
         print("\nRunning static quantization …")
+        print("  op types:  MatMul only (ConvInteger excluded — not in ORT CUDA EP)")
         input_name = backbone_input_name(in_path)
         print(f"  Input tensor name: {input_name!r}")
 
@@ -253,6 +278,7 @@ def main():
             in_path,
             out_path,
             reader,
+            op_types_to_quantize=CUDA_SAFE_OPS,
             quant_format=QuantFormat.QDQ,
             per_channel=args.per_channel,
             weight_type=QuantType.QInt8,
