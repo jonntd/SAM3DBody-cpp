@@ -63,6 +63,12 @@ public:
     bool is_open()           const { return mc_ != nullptr; }
     int  channels_per_frame()const { return total_channels_; }
 
+    // Optional label inserted before the numeric id in per-person filenames:
+    //   "<stem>_<prefix><id>.bvh".  Empty (default) keeps the documented
+    //   "<stem>_<id>.bvh" convention.  The offline --bvh-split-scenes path
+    //   sets this to e.g. "scene0_person" → "<stem>_scene0_person0.bvh".
+    void set_id_label_prefix(const std::string& p) { id_prefix_ = p; }
+
     BVHWriter()  = default;
     ~BVHWriter() { if (is_open()) close(); }
     BVHWriter(const BVHWriter&)            = delete;
@@ -100,6 +106,7 @@ private:
     BVH_MotionCapture* mc_              = nullptr;
     MHR_LBS_Data*      lbs_             = nullptr;
     std::string        out_path_;
+    std::string        id_prefix_;       // inserted before <id> in filenames
     int                total_channels_  = 0;
     float              frame_time_      = 1.0f / 30.0f;
     int                session_frames_  = 0;

@@ -10,6 +10,7 @@ cd ..
 #   --save output.mp4   → save mode with explicit output name
 SAVE_OUTPUT=""
 SAVE_REQUESTED=0
+FROM_SRC=""
 FORWARD_ARGS=()
 i=1
 while [ $i -le $# ]; do
@@ -21,22 +22,30 @@ while [ $i -le $# ]; do
             SAVE_OUTPUT="${!next}"
             i=$next
         fi
+    elif [ "${!i}" = "--from" ]; then
+        # Resolve the input here and strip it; it is always re-emitted FIRST
+        # (right after the binary) so the filename is visible at the front of
+        # the command line in htop/ps.
+        next=$((i+1))
+        if [ $next -le $# ]; then FROM_SRC="${!next}"; i=$next; fi
     else
         FORWARD_ARGS+=("${!i}")
     fi
     i=$((i+1))
 done
 
-# Detect whether --from is already present among the forwarded args.
-# If it is, we pass FORWARD_ARGS as-is to the binary; if not, we prepend
-# --from (preserving the original single-positional-arg behaviour).
-HAS_FROM=0
-for _a in "${FORWARD_ARGS[@]}"; do
-    [ "$_a" = "--from" ] && HAS_FROM=1 && break
-done
+# Positional fallback: if no --from was given, the first non-flag forwarded
+# token is the source (preserves the original single-positional-arg style,
+# e.g. `video.sh /dev/video0`).
+if [ -z "$FROM_SRC" ] && [ ${#FORWARD_ARGS[@]} -gt 0 ] && [[ "${FORWARD_ARGS[0]}" != --* ]]; then
+    FROM_SRC="${FORWARD_ARGS[0]}"
+    FORWARD_ARGS=("${FORWARD_ARGS[@]:1}")
+fi
 
-FIXED=(
-    ./build/fast_sam_3dbody_render
+# --from "$FROM_SRC" is emitted FIRST, right after the binary, so the input
+# filename leads the command line in htop/ps.
+BIN=./build/fast_sam_3dbody_render
+FIXED_FLAGS=(
     --onnx-dir ./onnx
     --gguf     ./onnx/pipeline.gguf
     --yolo     ./onnx/yolo.onnx
@@ -48,29 +57,11 @@ FIXED=(
 
 if [ "$SAVE_REQUESTED" -eq 0 ]; then
     # ── Normal live/preview mode (original behaviour) ─────────────────────
-    if [ "$HAS_FROM" -eq 1 ]; then
-        "${FIXED[@]}" "${FORWARD_ARGS[@]}"
-    else
-        "${FIXED[@]}" --from "${FORWARD_ARGS[@]}"
-    fi
+    "$BIN" --from "$FROM_SRC" "${FIXED_FLAGS[@]}" "${FORWARD_ARGS[@]}"
     exit $?
 fi
 
 # ── Save-to-file mode ─────────────────────────────────────────────────────────
-
-# Locate the source path for ffprobe (FPS + audio detection).
-# Prefer an explicit --from VALUE; fall back to the first positional arg.
-FROM_SRC=""
-_fa=("${FORWARD_ARGS[@]}")
-for _i in "${!_fa[@]}"; do
-    if [ "${_fa[$_i]}" = "--from" ]; then
-        FROM_SRC="${_fa[$((_i+1))]}"
-        break
-    fi
-done
-if [ -z "$FROM_SRC" ]; then
-    FROM_SRC="${FORWARD_ARGS[0]}"
-fi
 
 # Auto-derive output name when --save was given without a value.
 # summerlove.mp4 → summerlove_rendered.mp4; fallback: livelastRun3DHiRes.mp4
@@ -101,11 +92,7 @@ FRAME_PREFIX="${TMPFRAMES}/colorFrame_0_"
 # regression: the renderer was killed before reaching the end and the
 # encode silently used the truncated frame set.
 HEADLESS_ARG=("--headless")
-if [ "$HAS_FROM" -eq 1 ]; then
-    "${FIXED[@]}" "${FORWARD_ARGS[@]}" "${HEADLESS_ARG[@]}" --save-frames "$FRAME_PREFIX"
-else
-    "${FIXED[@]}" --from "${FORWARD_ARGS[@]}" "${HEADLESS_ARG[@]}" --save-frames "$FRAME_PREFIX"
-fi
+"$BIN" --from "$FROM_SRC" "${FIXED_FLAGS[@]}" "${FORWARD_ARGS[@]}" "${HEADLESS_ARG[@]}" --save-frames "$FRAME_PREFIX"
 RENDER_EXIT=$?
 
 # ── Validate the rendered frame count ─────────────────────────────────────────

@@ -1067,6 +1067,60 @@ struct Pipeline::Impl
         return results;
     }
 
+    // ── Whole-frame ViT embedding (scene-cut signal) ────────────────────────────
+    std::vector<float> scene_embedding(const cv::Mat& bgr)
+    {
+        if (!sess_backbone.session || bgr.empty()) return {};
+
+        // Resize the WHOLE frame (stretch, no bbox crop) to the backbone input
+        // and normalise exactly as crop_and_normalise does: BGR→RGB, /255,
+        // (x-mean)/std, interleaved→CHW.  We want a global scene descriptor,
+        // so the aspect-ratio distortion from a plain resize is harmless and
+        // identical frame-to-frame.
+        cv::Mat resized;
+        cv::resize(bgr, resized, {CROP_SIZE, CROP_SIZE}, 0, 0, cv::INTER_LINEAR);
+
+        const int plane = CROP_SIZE * CROP_SIZE;
+        std::vector<float> chw((size_t)3 * plane);
+        for (int y = 0; y < CROP_SIZE; ++y) {
+            const uchar* row = resized.ptr<uchar>(y);
+            for (int x = 0; x < CROP_SIZE; ++x) {
+                float b = row[3*x + 0] / 255.f;
+                float g = row[3*x + 1] / 255.f;
+                float r = row[3*x + 2] / 255.f;
+                chw[0 * plane + y * CROP_SIZE + x] = (r - IMAGE_MEAN[0]) / IMAGE_STD[0];
+                chw[1 * plane + y * CROP_SIZE + x] = (g - IMAGE_MEAN[1]) / IMAGE_STD[1];
+                chw[2 * plane + y * CROP_SIZE + x] = (b - IMAGE_MEAN[2]) / IMAGE_STD[2];
+            }
+        }
+
+        const int BACKBONE_DIM = 1280;
+        const int HW = FEAT_HW * FEAT_HW;   // 32×32 spatial grid
+        std::vector<int64_t> img_shape{1, 3, CROP_SIZE, CROP_SIZE};
+        Ort::MemoryInfo mi = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value img_t = Ort::Value::CreateTensor<float>(
+                               mi, chw.data(), chw.size(), img_shape.data(), 4);
+        auto out = sess_backbone.session->Run(
+                       Ort::RunOptions{nullptr},
+                       sess_backbone.input_names.data(),  &img_t,  1,
+                       sess_backbone.output_names.data(), 1);
+        const float* feat = out[0].GetTensorData<float>();   // [1,1280,32,32]
+
+        // Global-average-pool over the spatial grid → 1280-d, then L2-normalise.
+        std::vector<float> emb(BACKBONE_DIM, 0.f);
+        for (int c = 0; c < BACKBONE_DIM; ++c) {
+            const float* ch = feat + (size_t)c * HW;
+            float acc = 0.f;
+            for (int k = 0; k < HW; ++k) acc += ch[k];
+            emb[c] = acc / (float)HW;
+        }
+        double norm = 0.0;
+        for (float v : emb) norm += (double)v * v;
+        norm = std::sqrt(norm) + 1e-8;
+        for (float& v : emb) v = (float)(v / norm);
+        return emb;
+    }
+
     void free_all()
     {
         // CFFN weights are plain vectors – cleaned up automatically
@@ -1127,6 +1181,12 @@ void Pipeline::print_info() const
 std::vector<MHRResult> Pipeline::process_bgr(const uint8_t* bgr, int w, int h)
 {
     return impl_->process_bgr(bgr, w, h);
+}
+std::vector<float> Pipeline::scene_embedding(const uint8_t* bgr, int w, int h)
+{
+    if (!impl_) return {};
+    cv::Mat img(h, w, CV_8UC3, const_cast<uint8_t*>(bgr));
+    return impl_->scene_embedding(img);
 }
 
 } // namespace fsb

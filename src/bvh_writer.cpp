@@ -1005,14 +1005,17 @@ void BVHWriter::rewrite_offsets_for(PerPerson& p)
     }
 }
 
-// Build "<base>_<id>.<ext>".  If out_path_ has no extension, append .bvh.
-static std::string per_person_path(const std::string& base, int id)
+// Build "<base>_<prefix><id>.<ext>".  If out_path_ has no extension, append
+// .bvh.  prefix is normally empty (→ "<base>_<id>.bvh"); --bvh-split-scenes
+// sets it to e.g. "scene0_person".
+static std::string per_person_path(const std::string& base,
+                                   const std::string& prefix, int id)
 {
     auto dot = base.find_last_of('.');
     auto slash = base.find_last_of("/\\");
     bool has_ext = (dot != std::string::npos) && (slash == std::string::npos || dot > slash);
-    if (has_ext) return base.substr(0, dot) + "_" + std::to_string(id) + base.substr(dot);
-    return base + "_" + std::to_string(id) + ".bvh";
+    if (has_ext) return base.substr(0, dot) + "_" + prefix + std::to_string(id) + base.substr(dot);
+    return base + "_" + prefix + std::to_string(id) + ".bvh";
 }
 
 bool BVHWriter::dump_one_person(const PerPerson& p)
@@ -1038,7 +1041,7 @@ bool BVHWriter::dump_one_person(const PerPerson& p)
     mc_->numberOfFramesEncountered = mc_->numberOfFrames;
     mc_->frameTime          = frame_time_;
 
-    std::string path = per_person_path(out_path_, p.id);
+    std::string path = per_person_path(out_path_, id_prefix_, p.id);
     int ok = dumpBVHToBVH(path.c_str(), mc_, /*hierarchy=*/1, /*motion=*/1);
     if (ok) printf("[BVHWriter] wrote %d frames → %s\n", p.frame_count, path.c_str());
     else    fprintf(stderr, "[BVHWriter] dumpBVHToBVH('%s') failed\n", path.c_str());

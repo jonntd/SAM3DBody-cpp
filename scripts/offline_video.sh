@@ -84,6 +84,13 @@ while [ $i -lt ${#ARGS[@]} ]; do
             SAVE_OUTPUT="${ARGS[$next]}"
             i=$next
         fi
+    elif [ "$a" = "--from" ]; then
+        # --from is already resolved into $FROM_SRC above and is always
+        # re-emitted FIRST (see the exec below) so the input filename shows
+        # up at the front of the command line in htop/ps.  Strip it (and its
+        # value) here to avoid passing it twice.
+        next=$((i+1))
+        [ $next -lt ${#ARGS[@]} ] && i=$next
     else
         OFFLINE_ARGS+=("$a")
     fi
@@ -91,19 +98,18 @@ while [ $i -lt ${#ARGS[@]} ]; do
 done
 
 # ── Run the offline binary ───────────────────────────────────────────────────
-FIXED=(
-    ./build/offline_sam_3dbody_render
+# --from "$FROM_SRC" is emitted FIRST, right after the binary, so the input
+# filename is visible at the front of the command line in htop/ps — makes it
+# obvious which job is running during a long batch.
+BIN=./build/offline_sam_3dbody_render
+FIXED_FLAGS=(
     --onnx-dir ./onnx
     --gguf     ./onnx/pipeline.gguf
     --yolo     ./onnx/yolo.onnx
     --enforce-hand-limits
     --sticky-hand-pose
 )
-if [ $HAS_FROM -eq 1 ]; then
-    "${FIXED[@]}" "${OFFLINE_ARGS[@]}"
-else
-    "${FIXED[@]}" --from "$FROM_SRC" "${OFFLINE_ARGS[@]}"
-fi
+"$BIN" --from "$FROM_SRC" "${FIXED_FLAGS[@]}" "${OFFLINE_ARGS[@]}"
 OFFLINE_EXIT=$?
 if [ $OFFLINE_EXIT -ne 0 ]; then
     echo "offline binary exited with code $OFFLINE_EXIT — skipping rendered-mp4 step." >&2

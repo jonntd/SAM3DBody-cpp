@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # scripts/batch_video.sh FILE [FILE ...] [-- extra flags]
 #
-# Run scripts/video.sh --save --bvh on every supplied file, serially.
+# Run scripts/offline_video.sh --save --bvh on every supplied file, serially.
 #
 # For each file the derived outputs are:
 #   borat.mkv  →  --from borat.mkv  --save borat_rendered.mp4  --bvh borat.bvh
+#
+# BVH is split per scene by default (--bvh-split-scenes), so a multi-shot clip
+# yields borat_scene0_person0.bvh, borat_scene1_person0.bvh, … rather than one
+# track stitched across unrelated shots.
 #
 # Anything after the first --flag argument is forwarded verbatim to every
 # video.sh call.  Both invocation styles work:
@@ -17,7 +21,7 @@
 set -euo pipefail
 
 THISDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-VIDEO_SH="$THISDIR/video.sh"
+VIDEO_SH="$THISDIR/offline_video.sh"
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $(basename "$0") FILE [FILE ...] [extra flags for video.sh]"
@@ -78,10 +82,15 @@ for FILE in "${FILES[@]}"; do
     echo "  Rendered: $RENDERED_OUT"
     echo "──────────────────────────────────────────────"
 
+    # --bvh-split-scenes is the batch default: long batch clips are usually
+    # multi-shot, so we want per-scene BVH files (<stem>_scene<S>_person<P>.bvh)
+    # rather than one track spanning unrelated shots.  Pass --no-scene-detection
+    # (or override via EXTRA) for genuinely single-shot inputs.
     if bash "$VIDEO_SH" \
             --from "$FILE" \
             --save "$RENDERED_OUT" \
             --bvh  "$BVH_OUT" \
+            --bvh-split-scenes \
             "${EXTRA[@]}"; then
         PASS=$((PASS + 1))
         echo "  ✓ done: $FILE"

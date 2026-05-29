@@ -133,6 +133,15 @@ public:
     std::vector<MHRResult> process_mat(const void* cv_mat_ptr);
 #endif
 
+    // ── Whole-frame ViT scene embedding ──────────────────────────────────────
+    // Runs the backbone on the *entire* image (resized to the backbone's
+    // 512×512 input), global-average-pools the [1280,32,32] feature map over
+    // the spatial grid and L2-normalises the result.  Returns a 1280-d unit
+    // vector whose cosine similarity to the previous frame's embedding is a
+    // robust, semantic scene-cut signal (used by the offline detector).
+    // Returns an empty vector if the backbone session isn't available.
+    std::vector<float> scene_embedding(const uint8_t* bgr, int width, int height);
+
     // True after a successful load().
     bool is_loaded() const;
 

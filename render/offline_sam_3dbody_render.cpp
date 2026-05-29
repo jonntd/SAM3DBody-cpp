@@ -193,6 +193,22 @@ struct Config : public CommonConfig
     bool      scene_detection      = true;
     float     scene_success_thresh = 0.50f;
     int       scene_min_corners    = 30;
+    // ViT signal: cosine similarity of the whole-frame backbone embedding
+    // between consecutive frames.  A drop below scene_vit_thresh is a strong
+    // semantic cut signal that counts double in the detector's vote.
+    bool      scene_use_vit        = true;
+    float     scene_vit_thresh     = 0.60f;
+    // ViT veto: if the whole-frame embedding cosine stays this high the scene
+    // is demonstrably unchanged, so suppress a cut even when the heuristics
+    // (corner/hist/person) voted for one — they over-fire on fast-camera
+    // game/action footage with a stable palette.  Set to 1.0 to disable veto.
+    float     scene_vit_veto_thresh = 0.90f;
+
+    // Split the output into one set of BVH files per detected scene, with
+    // people re-indexed locally within each scene:
+    //   <stem>_scene<S>_person<P>.bvh   (default: one <stem>_<id>.bvh per track
+    //   spanning the whole clip).  Requires scene detection.
+    bool      bvh_split_scenes      = false;
 
     // bvh_body_shape_change / bvh_hand_shape_change /
     // bvh_compensate_finger_endsites all come from CommonConfig now.
@@ -239,6 +255,14 @@ static void print_usage(const char* prog)
         "  --static-scene             Alias for --no-scene-detection — assert a single-shot input.\n"
         "  --scene-success-threshold T  Cut when LK-flow success-rate falls below T (default 0.50).\n"
         "  --scene-min-corners      N   Re-seed corners when fewer than N remain (default 30).\n"
+        "  --no-scene-vit             Disable the ViT whole-frame embedding signal (on by default).\n"
+        "  --scene-vit-threshold T      Cut when frame-to-frame backbone-embedding cosine drops below\n"
+        "                             T (default 0.60).  The ViT signal counts double in the vote.\n"
+        "  --scene-vit-veto-threshold T Suppress a cut when the embedding cosine stays >= T (default\n"
+        "                             0.90) — the scene is unchanged, so the heuristics over-fired.\n"
+        "                             Set to 1.0 to disable the veto.\n"
+        "  --bvh-split-scenes         Write one set of BVH files per detected scene, people\n"
+        "                             re-indexed per scene: <stem>_scene<S>_person<P>.bvh\n"
         "\n"
         "JITTER INTERPOLATION (opt-in)\n"
         "  --interpolate-jitter       Replace frames whose 3D keypoint velocity exceeds the threshold\n"
@@ -279,6 +303,8 @@ static bool parse_args(int argc, char** argv, Config& c)
         A1("--min-track-frames",        min_track_frames,    std::stoi)
         A1("--scene-success-threshold", scene_success_thresh, std::stof)
         A1("--scene-min-corners",       scene_min_corners,   std::stoi)
+        A1("--scene-vit-threshold",     scene_vit_thresh,    std::stof)
+        A1("--scene-vit-veto-threshold", scene_vit_veto_thresh, std::stof)
         A1("--jitter-threshold-cm",     jitter_threshold_cm, std::stof)
         A1("--gap-max-frames",          gap_max_frames,      std::stoi)
 #undef A1
@@ -294,6 +320,8 @@ static bool parse_args(int argc, char** argv, Config& c)
         if (!strcmp(argv[i], "--interpolate-jitter"))     { c.interpolate_jitter = true; continue; }
         if (!strcmp(argv[i], "--no-gap-interpolation"))   { c.gap_interpolation = false; continue; }
         if (!strcmp(argv[i], "--no-scene-detection"))     { c.scene_detection = false; continue; }
+        if (!strcmp(argv[i], "--no-scene-vit"))           { c.scene_use_vit = false; continue; }
+        if (!strcmp(argv[i], "--bvh-split-scenes"))       { c.bvh_split_scenes = true; continue; }
         // --static-scene is the user-facing alias for --no-scene-detection:
         // "I'm asserting this clip is a single continuous shot."  Skips the
         // per-frame OpenCV scene-detector work and prevents any false-
@@ -394,8 +422,11 @@ static float vec3_dist(const std::array<float,3>& a, const std::array<float,3>& 
 class SceneDetector
 {
 public:
-    SceneDetector(float success_thresh, int min_corners)
-        : success_thresh_(success_thresh), min_corners_(min_corners) {}
+    SceneDetector(float success_thresh, int min_corners,
+                  bool use_vit, float vit_thresh, float vit_veto_thresh)
+        : success_thresh_(success_thresh), min_corners_(min_corners),
+          use_vit_(use_vit), vit_thresh_(vit_thresh),
+          vit_veto_thresh_(vit_veto_thresh) {}
 
     // Returns true if this frame is the FIRST frame of a new shot
     // (i.e. there was a cut between frame_idx-1 and frame_idx).
@@ -432,7 +463,8 @@ public:
     //     isolated events; consecutive flags are always tracker artefacts.
     bool process(const cv::Mat& bgr,
                  const std::vector<fsb::MHRResult>& detections,
-                 int frame_idx)
+                 int frame_idx,
+                 const std::vector<float>& vit_embed = {})
     {
         cv::Mat gray;
         cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
@@ -535,12 +567,53 @@ public:
             }
         }
 
-        // Vote: any two of {corner_fail, hist_diff, person_jump} agreeing
-        // is enough.  This makes each signal corroborate the others —
-        // tracking artefacts (false positive on A or B alone) get rejected
-        // unless a SECOND independent signal also fires.
-        int signals = (int)corner_fail + (int)hist_diff + (int)person_jump;
+        // Signal (D) — ViT whole-frame embedding discontinuity.  The backbone
+        // (a DINOv3-style ViT) produces a global L2-normalised scene descriptor
+        // per frame; within a shot consecutive descriptors are highly aligned
+        // (cosine ≳ 0.9) even under fast camera/subject motion, because the
+        // *content* is unchanged.  A hard cut drops cosine sharply.  This is
+        // the semantic signal that LK/histogram miss on fast-action footage.
+        bool   vit_cut   = false;
+        bool   vit_valid = false;               // did we actually compute a cosine?
+        double vit_cos   = 1.0;
+        if (use_vit_ && frame_idx > 0 &&
+            !prev_embed_.empty() && !vit_embed.empty() &&
+            prev_embed_.size() == vit_embed.size()) {
+            vit_cos = 0.0;                          // both vectors are unit-norm
+            for (size_t i = 0; i < vit_embed.size(); ++i)
+                vit_cos += (double)prev_embed_[i] * vit_embed[i];
+            vit_cut   = (vit_cos < vit_thresh_);
+            vit_valid = true;
+        }
+
+        // Vote: any two of {corner_fail, hist_diff, person_jump} agreeing is
+        // enough.  Each signal corroborates the others — a false positive on
+        // A or B alone is rejected unless a SECOND independent signal fires.
+        // The ViT signal (D) counts DOUBLE: a clean semantic cut therefore
+        // fires on its own, even when LK/histogram disagree (their failure
+        // mode on fast-action footage), while still being subject to the
+        // debounce below.
+        int signals = (int)corner_fail + (int)hist_diff + (int)person_jump
+                    + 2 * (int)vit_cut;
         bool scene_change = (signals >= 2);
+
+        // ViT veto — if the whole-frame embedding is essentially unchanged the
+        // heuristics over-fired (fast camera breaks LK corners + jitters the
+        // tracker on a stable-palette shot).  Suppress the cut.  Guarded by:
+        //   * vit_valid  — a missing embedding (ViT off / first frame, cos=1.0)
+        //                  must never silently veto everything.
+        //   * !hist_diff — the HSV histogram is the most reliable "content
+        //                  actually changed" signal.  On color-graded film a
+        //                  genuine cut still scores high ViT cosine (the whole
+        //                  film looks alike) yet hist fires; the game-footage
+        //                  false positives that motivated the veto are all
+        //                  hist=0.  So we only veto when hist did NOT corroborate.
+        bool vit_veto = false;
+        if (use_vit_ && vit_valid && scene_change && !hist_diff &&
+            vit_cos >= vit_veto_thresh_) {
+            scene_change = false;
+            vit_veto     = true;
+        }
 
         // Debounce — never report cuts in adjacent frames.  Real shots last
         // at least a few frames; consecutive flags are LK/hist noise.
@@ -548,6 +621,16 @@ public:
         if (scene_change && (frame_idx - last_cut_frame_) < MIN_FRAMES_BETWEEN_CUTS)
             scene_change = false;
         if (scene_change) last_cut_frame_ = frame_idx;
+
+        // Per-cut signal breakdown — lets the user see which heuristics fired
+        // (and the ViT cosine) so the thresholds can be tuned per clip.  Vetoed
+        // cuts are reported too (the heuristics voted but ViT overruled them).
+        if (scene_change || vit_veto)
+            printf("\n[scene]   %s @frame %d  corner=%d hist=%d person=%d "
+                   "vit=%d (cos=%.2f)\n",
+                   vit_veto ? "VETO" : "cut ",
+                   frame_idx, (int)corner_fail, (int)hist_diff,
+                   (int)person_jump, (int)vit_cut, vit_cos);
 
         // Re-seed corners on a real cut OR when the working set has thinned.
         if (scene_change || (int)prev_corners_.size() < min_corners_) {
@@ -558,6 +641,7 @@ public:
         prev_gray_       = std::move(gray);
         prev_hist_       = hist.clone();
         prev_detections_ = detections;          // copy: needed for signal (C)
+        if (!vit_embed.empty()) prev_embed_ = vit_embed;   // signal (D)
         return scene_change;
     }
 
@@ -566,8 +650,12 @@ private:
     cv::Mat                       prev_hist_;
     std::vector<cv::Point2f>      prev_corners_;
     std::vector<fsb::MHRResult>   prev_detections_;   // for person_jump signal
+    std::vector<float>            prev_embed_;        // for ViT signal (D)
     float                         success_thresh_;
     int                           min_corners_;
+    bool                          use_vit_;
+    float                         vit_thresh_;
+    float                         vit_veto_thresh_;
     int                           last_cut_frame_ = -1000;
 };
 
@@ -607,7 +695,9 @@ static bool run_inference_pass(fsb::Pipeline& pipeline,
 
     // Scene detector lives alongside the loop; it consumes the BGR frame
     // before we drop it, so no extra storage is needed.
-    SceneDetector scene(cfg.scene_success_thresh, cfg.scene_min_corners);
+    SceneDetector scene(cfg.scene_success_thresh, cfg.scene_min_corners,
+                        cfg.scene_use_vit, cfg.scene_vit_thresh,
+                        cfg.scene_vit_veto_thresh);
 
     cv::Mat frame;
     int idx = 0;
@@ -632,7 +722,13 @@ static bool run_inference_pass(fsb::Pipeline& pipeline,
         // Detect scene change AFTER inference so the detector sees the
         // current frame's person mask via the detections we just produced.
         if (cfg.scene_detection) {
-            if (scene.process(frame, rec.detections, idx))
+            // Whole-frame ViT embedding (signal D) — one extra backbone forward
+            // on the full frame.  Computed here so the detector stays free of
+            // any Pipeline dependency.
+            std::vector<float> vit_embed;
+            if (cfg.scene_use_vit)
+                vit_embed = pipeline.scene_embedding(frame.data, frame.cols, frame.rows);
+            if (scene.process(frame, rec.detections, idx, vit_embed))
                 out_scene_cuts.push_back(idx);
         }
 
@@ -1376,9 +1472,17 @@ static void smoothing_pass(std::vector<FrameRecord>& frames,
 //  use, just with externally-assigned IDs.
 // ════════════════════════════════════════════════════════════════════════════
 
-static void export_to_bvh(const std::vector<FrameRecord>& frames,
-                          const std::vector<Track>& tracks,
-                          double fps, const Config& cfg)
+// Write the frames in [seg_a, seg_b) to one BVHWriter.  `id_prefix` is the
+// per-person filename label ("" → "<stem>_<id>.bvh").  `id_remap`, when
+// non-null, maps global track id → the id written into the file (the
+// --bvh-split-scenes path uses it to re-index people 0..N-1 within a scene);
+// when null the global track id is used unchanged.
+static void export_range(const std::vector<FrameRecord>& frames,
+                         const std::vector<Track>& tracks,
+                         double fps, const Config& cfg,
+                         int seg_a, int seg_b,
+                         const std::string& id_prefix,
+                         const std::map<int,int>* id_remap)
 {
     BVHWriter w;
     if (!w.open(cfg.bvh_template, cfg.bvh_path, 1.0f / (float)fps, cfg.lbs_path,
@@ -1391,36 +1495,89 @@ static void export_to_bvh(const std::vector<FrameRecord>& frames,
         fprintf(stderr, "[pass6] BVHWriter::open failed — aborting export\n");
         return;
     }
-    printf("[pass6] writing BVH (%.2f fps timeline) …\n", fps);
+    w.set_id_label_prefix(id_prefix);
 
-    // Per-track scratch: for each frame, is the track present?  Lets us emit
-    // pad_ids without re-scanning the full session map.
+    // Per-track scratch, clamped to this segment: for each frame, is the track
+    // present?  Lets us emit pad_ids without re-scanning the full session map.
     struct TrackState { int first; int last; const std::map<int,int>* fr_to_det; };
     std::map<int, TrackState> ts;
-    for (const auto& t : tracks)
-        ts[t.id] = { t.first_frame, t.last_frame, &t.frame_to_det };
+    for (const auto& t : tracks) {
+        int first = std::max(t.first_frame, seg_a);
+        int last  = std::min(t.last_frame,  seg_b - 1);
+        if (first > last) continue;                       // track not in segment
+        if (id_remap && !id_remap->count(t.id)) continue; // not assigned a local id
+        int out_id = id_remap ? id_remap->at(t.id) : t.id;
+        ts[out_id] = { first, last, &t.frame_to_det };
+    }
 
-    for (int f = 0; f < (int)frames.size(); ++f)
+    for (int f = seg_a; f < seg_b; ++f)
     {
         std::vector<fsb::MHRResult> results;
         std::vector<int>            ids;
         std::vector<int>            pad_ids;
 
-        for (const auto& [id, st] : ts)
+        for (const auto& [out_id, st] : ts)
         {
             if (f < st.first || f > st.last) continue;   // track inactive
             auto it = st.fr_to_det->find(f);
             if (it != st.fr_to_det->end()) {
                 results.push_back(frames[f].detections[it->second]);
-                ids.push_back(id);
+                ids.push_back(out_id);
             } else {
                 // Alive in [first,last] but no detection this frame — pad.
-                pad_ids.push_back(id);
+                pad_ids.push_back(out_id);
             }
         }
         w.write_frame_external(results, ids, pad_ids);
     }
     w.close();
+}
+
+static void export_to_bvh(const std::vector<FrameRecord>& frames,
+                          const std::vector<Track>& tracks,
+                          const std::vector<int>& scene_cuts,
+                          double fps, const Config& cfg)
+{
+    const int F = (int)frames.size();
+
+    if (!cfg.bvh_split_scenes) {
+        printf("[pass6] writing BVH (%.2f fps timeline) …\n", fps);
+        export_range(frames, tracks, fps, cfg, 0, F, "", nullptr);
+        return;
+    }
+
+    // Split: scene S spans [start, cut) for each cut, plus a final tail.
+    std::vector<std::pair<int,int>> segs;
+    int start = 0;
+    for (int c : scene_cuts) { if (c > start && c <= F) { segs.push_back({start, c}); start = c; } }
+    segs.push_back({start, F});
+
+    printf("[pass6] writing BVH split across %zu scene(s) "
+           "(<stem>_scene<S>_person<P>.bvh) …\n", segs.size());
+
+    for (size_t s = 0; s < segs.size(); ++s) {
+        int a = segs[s].first, b = segs[s].second;
+        // Re-index the tracks present in this scene to local person 0..N-1,
+        // ordered by their first appearance within the scene.
+        std::vector<std::pair<int,int>> present;   // (first_frame_in_seg, global_id)
+        for (const auto& t : tracks) {
+            int first = std::max(t.first_frame, a);
+            int last  = std::min(t.last_frame,  b - 1);
+            if (first <= last) present.push_back({first, t.id});
+        }
+        if (present.empty()) {
+            printf("[pass6]   scene %zu [%d,%d): no people — skipped\n", s, a, b);
+            continue;
+        }
+        std::sort(present.begin(), present.end());
+        std::map<int,int> remap;
+        int local = 0;
+        for (auto& [ff, gid] : present) remap[gid] = local++;
+
+        printf("[pass6]   scene %zu [%d,%d): %d person(s)\n", s, a, b, local);
+        std::string prefix = "scene" + std::to_string(s) + "_person";
+        export_range(frames, tracks, fps, cfg, a, b, prefix, &remap);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1484,7 +1641,7 @@ int main(int argc, char** argv)
     smoothing_pass(frames, tracks, scene_cuts, (float)fps, cfg);
 
     // PASS 6 — BVH export -----------------------------------------------
-    export_to_bvh(frames, tracks, fps, cfg);
+    export_to_bvh(frames, tracks, scene_cuts, fps, cfg);
 
     printf("done.\n");
     return 0;
