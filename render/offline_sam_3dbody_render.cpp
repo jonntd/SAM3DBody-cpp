@@ -1472,6 +1472,23 @@ static void smoothing_pass(std::vector<FrameRecord>& frames,
 //  use, just with externally-assigned IDs.
 // ════════════════════════════════════════════════════════════════════════════
 
+// First/last frame for which `t` has an ACTUAL detection within [a, b).
+// Returns false if the track has no detection in the segment.  This is the
+// correct "present in this segment" test: a track whose detection span merely
+// straddles the segment (e.g. detections in the shots before and after, with a
+// scene-cut-blocked gap through this one) has first_frame<a<b<last_frame yet no
+// detection here — counting it would create a person that is all padding, which
+// BVHWriter never materialises (pad_continuation_frame no-ops an uncreated id).
+static bool track_detect_span_in(const Track& t, int a, int b, int& first, int& last)
+{
+    auto lo = t.frame_to_det.lower_bound(a);
+    auto hi = t.frame_to_det.lower_bound(b);   // first key >= b
+    if (lo == hi) return false;
+    first = lo->first;
+    last  = std::prev(hi)->first;
+    return true;
+}
+
 // Write the frames in [seg_a, seg_b) to one BVHWriter.  `id_prefix` is the
 // per-person filename label ("" → "<stem>_<id>.bvh").  `id_remap`, when
 // non-null, maps global track id → the id written into the file (the
@@ -1502,9 +1519,8 @@ static void export_range(const std::vector<FrameRecord>& frames,
     struct TrackState { int first; int last; const std::map<int,int>* fr_to_det; };
     std::map<int, TrackState> ts;
     for (const auto& t : tracks) {
-        int first = std::max(t.first_frame, seg_a);
-        int last  = std::min(t.last_frame,  seg_b - 1);
-        if (first > last) continue;                       // track not in segment
+        int first, last;
+        if (!track_detect_span_in(t, seg_a, seg_b, first, last)) continue; // no detection here
         if (id_remap && !id_remap->count(t.id)) continue; // not assigned a local id
         int out_id = id_remap ? id_remap->at(t.id) : t.id;
         ts[out_id] = { first, last, &t.frame_to_det };
@@ -1559,11 +1575,10 @@ static void export_to_bvh(const std::vector<FrameRecord>& frames,
         int a = segs[s].first, b = segs[s].second;
         // Re-index the tracks present in this scene to local person 0..N-1,
         // ordered by their first appearance within the scene.
-        std::vector<std::pair<int,int>> present;   // (first_frame_in_seg, global_id)
+        std::vector<std::pair<int,int>> present;   // (first_detection_in_seg, global_id)
         for (const auto& t : tracks) {
-            int first = std::max(t.first_frame, a);
-            int last  = std::min(t.last_frame,  b - 1);
-            if (first <= last) present.push_back({first, t.id});
+            int first, last;
+            if (track_detect_span_in(t, a, b, first, last)) present.push_back({first, t.id});
         }
         if (present.empty()) {
             printf("[pass6]   scene %zu [%d,%d): no people — skipped\n", s, a, b);
