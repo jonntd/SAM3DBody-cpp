@@ -22,6 +22,9 @@ MakeHuman-rigged character from the result. See **[BVH export](#bvh-export---bvh
 
 [![SAM3DBody-cpp — watch a video in Youtube](doc/vid.jpg)](https://www.youtube.com/watch?v=f-tCwCQvurQ)
 
+
+<p align="center"><em>If you want to see the repo in action, there is a <a href="https://www.youtube.com/watch?v=f-tCwCQvurQ">Youtube video here</a></em></p>
+
 ---
 
 ## Models
