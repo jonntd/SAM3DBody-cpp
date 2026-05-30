@@ -60,6 +60,18 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+static std::wstring utf8_to_wstr(const std::string& s) {
+    if (s.empty()) return {};
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    if (len <= 0) return {};
+    std::wstring ws(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &ws[0], len);
+    return ws;
+}
+#endif
+
 namespace fsb
 {
 
@@ -243,7 +255,12 @@ struct OrtSession
                     opts.AppendExecutionProvider_TensorRT(tp);
                 }
 #endif
+                #ifdef _WIN32
+                auto wpath = utf8_to_wstr(path);
+                session = new Ort::Session(e, wpath.c_str(), opts);
+#else
                 session = new Ort::Session(e, path.c_str(), opts);
+#endif
                 if (!try_cuda && cuda)
                     fprintf(stderr, "[ORT] WARNING: '%s' running on CPU (CUDA EP unavailable)\n",
                             path.c_str());

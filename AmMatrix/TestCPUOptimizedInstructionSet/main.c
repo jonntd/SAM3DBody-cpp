@@ -2,12 +2,30 @@
 #include <stdlib.h>
 #include <time.h>
 
+#ifdef _MSC_VER
+#include <windows.h>
+#endif
+
 #include "../matrix4x4Tools.h"
 
 unsigned long tickBaseMN=0;
 
 unsigned long GetTickCountMicrosecondsMN()
 {
+#ifdef _MSC_VER
+    LARGE_INTEGER freq, count;
+    if (!QueryPerformanceFrequency(&freq))
+        return 0;
+    if (!QueryPerformanceCounter(&count))
+        return 0;
+    unsigned long us = (unsigned long)(count.QuadPart * 1000000 / freq.QuadPart);
+    if (tickBaseMN == 0)
+    {
+        tickBaseMN = us;
+        return 0;
+    }
+    return us - tickBaseMN;
+#else
     struct timespec ts;
     if ( clock_gettime(CLOCK_MONOTONIC,&ts) != 0)
     {
@@ -21,6 +39,7 @@ unsigned long GetTickCountMicrosecondsMN()
     }
 
     return ( ts.tv_sec*1000000 + ts.tv_nsec/1000 ) - tickBaseMN;
+#endif
 }
 
 
