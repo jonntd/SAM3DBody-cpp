@@ -12,6 +12,12 @@ extern "C"
 {
 #endif
 
+#ifdef _MSC_VER
+#define ALIGNED_16(x) __declspec(align(16)) x
+#else
+#define ALIGNED_16(x) x __attribute__((aligned(16)))
+#endif
+
 int codeHasSSE();
 int codeHasAVX2();
 
@@ -65,7 +71,7 @@ struct Matrix4x4OfFloats
      I31     , I32 , I33 , I34 ,
      I41     , I42 , I43 , I44
     */
-  float __attribute__((aligned(16))) m[16];
+  ALIGNED_16(float) m[16];
 };
 
 
@@ -79,7 +85,7 @@ struct Vector4x1OfFloats
      IRC => Item Row/Column =>
      I11, I12, I13, I14
     */
-  float __attribute__((aligned(16))) m[4];
+  ALIGNED_16(float) m[4];
 };
 
 

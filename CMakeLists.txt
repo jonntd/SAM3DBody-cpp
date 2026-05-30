@@ -469,6 +469,7 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(offline_sam_3dbody_render
     render/offline_sam_3dbody_render.cpp
+    src/offline_passes.cpp
 )
 
 target_include_directories(offline_sam_3dbody_render PRIVATE
