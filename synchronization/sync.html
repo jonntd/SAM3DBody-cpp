@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QR Timecode Sync</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    h1 { margin-top: 0; }
+
+    /* NEW: edge stripes like your screenshot */
+    .vStripe {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 14px;          /* thickness (edit me) */
+      height: 100vh;
+      background: #8e44ad;  /* initial color */
+      z-index: 9999;
+    }
+    .hStripe {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 14px;         /* thickness (edit me) */
+      background: #8e44ad;  /* initial color */
+      z-index: 9999;
+    }
+
+    .top {
+      display: flex;
+      gap: 18px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    canvas {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      image-rendering: pixelated;
+      display:block;
+    }
+
+    .rightPanel {
+      min-width: 260px;
+      max-width: 520px;
+    }
+
+    .ts {
+      font-variant-numeric: tabular-nums;
+      line-height: 1.25;
+      margin-bottom: 10px;
+    }
+
+    .tsRow { margin: 6px 0; }
+    .label { opacity: 0.75; display:inline-block; width: 120px; }
+    code { background:#f6f6f6; padding: 2px 6px; border-radius: 6px; }
+
+    /* Flash rectangle that changes on QR updates */
+    .flashBox {
+      width: 240px;
+      height: 120px;
+      border-radius: 14px;
+      border: 1px solid #ddd;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+      margin-top: 8px;
+    }
+
+    /* Optional single-pixel marker (CSS pixel). For camera sampling, enlarge it if needed. */
+    .pixelRow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .pixel {
+      width: 1px;
+      height: 1px;
+      background: #000;
+      outline: 1px solid rgba(0,0,0,0.2); /* so you can see it on screen */
+      transform: scale(12);               /* enlarge for visibility; comment out for true 1px */
+      transform-origin: top left;
+      border-radius: 0;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 12px 0 14px 0;
+    }
+
+    button, select, input[type="number"] {
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      background: white;
+    }
+    button { cursor: pointer; }
+    button:active { transform: translateY(1px); }
+    input[type="range"] { width: 220px; }
+
+    .kv { margin: 8px 0; }
+    .payload {
+      white-space: pre-wrap;
+      background:#f6f6f6;
+      padding:12px;
+      border-radius:12px;
+      margin: 0;
+      max-width: min(980px, 100%);
+    }
+    .note { max-width: 980px; line-height: 1.35; margin-top: 12px; opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <!-- NEW: edge stripes -->
+  <div id="vStripe" class="vStripe"></div>
+  <div id="hStripe" class="hStripe"></div>
+
+  <h1>QR Timecode Sync</h1>
+
+  <div class="top">
+    <!-- Left: QR -->
+    <canvas id="qr" width="360" height="360"></canvas>
+
+    <!-- Right: timestamp + flash rectangle -->
+    <div class="rightPanel">
+      <div class="ts">
+        <div class="tsRow"><span class="label">Date.now():</span> <code id="tsUnix">-</code> ms</div>
+        <div class="tsRow"><span class="label">perf.now():</span> <code id="tsPerf">-</code> ms</div>
+        <div class="tsRow"><span class="label">Last QR update:</span> <code id="tsLastUpdate">-</code> ms</div>
+      </div>
+
+      <div class="kv">Update flash (changes only when QR updates):</div>
+      <div id="flash" class="flashBox"></div>
+
+      <div class="pixelRow">
+        <div class="kv" style="margin:0;">Pixel marker (toggles on update):</div>
+        <div id="pixel" class="pixel" title="Update pixel marker"></div>
+      </div>
+
+      <div class="note" style="margin-top: 12px;">
+        Pro Tip: Also take a camera rolling shutter into account :P
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button id="toggle">Pause</button>
+
+    <label>
+      Rate (Hz):
+      <select id="rate">
+        <option>1</option>
+        <option>2</option>
+        <option>5</option>
+        <option>10</option>
+        <option>15</option>
+        <option>30</option>
+        <option selected>60</option>
+      </select>
+    </label>
+
+    <label>
+      Custom:
+      <input id="customRate" type="number" min="0.1" step="0.1" placeholder="Hz" style="width:90px;">
+    </label>
+
+    <span>Actual loop FPS: <code id="fps">?</code></span>
+    <span>Frame: <code id="frame">0</code></span>
+
+    <span style="flex-basis:100%; height:0;"></span>
+
+    <button id="zoomOut">−</button>
+    <label>
+      Zoom:
+      <input id="zoom" type="range" min="0.5" max="3.0" step="0.05" value="1.0">
+      <code id="zoomLabel">1.00×</code>
+    </label>
+    <button id="zoomIn">+</button>
+
+    <button id="fit">Fit to page</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <!-- Payload under controls -->
+  <div class="kv">Payload preview:</div>
+  <pre id="payload" class="payload"></pre>
+
+  <div class="note">
+    Notes:
+    <br>- The QR refresh is capped by display refresh; QR regeneration is gated by your selected Hz.
+    <br>- The flash rectangle + pixel marker update only when the QR is redrawn (useful for vision-based detection).
+  </div>
+
+  <script src="qrcode.js"></script>
+  <script>
+    const canvas = document.getElementById("qr");
+    const ctx = canvas.getContext("2d", { alpha: false });
+
+    const fpsEl = document.getElementById("fps");
+    const frameEl = document.getElementById("frame");
+    const payloadEl = document.getElementById("payload");
+    const toggleBtn = document.getElementById("toggle");
+
+    const rateSel = document.getElementById("rate");
+    const customRateInput = document.getElementById("customRate");
+
+    const zoomSlider = document.getElementById("zoom");
+    const zoomLabel = document.getElementById("zoomLabel");
+    const zoomOutBtn = document.getElementById("zoomOut");
+    const zoomInBtn = document.getElementById("zoomIn");
+    const fitBtn = document.getElementById("fit");
+    const resetBtn = document.getElementById("reset");
+
+    const tsUnixEl = document.getElementById("tsUnix");
+    const tsPerfEl = document.getElementById("tsPerf");
+    const tsLastUpdateEl = document.getElementById("tsLastUpdate");
+    const flashEl = document.getElementById("flash");
+    const pixelEl = document.getElementById("pixel");
+
+    // NEW: edge stripes
+    const vStripeEl = document.getElementById("vStripe");
+    const hStripeEl = document.getElementById("hStripe");
+
+    // QR config
+    const QR_EC_LEVEL = "M";
+    const QUIET_ZONE = 4;
+
+    // State
+    let running = true;
+    let frame = 0;
+
+    // Update rate (Hz)
+    let targetHz = 60;
+    let targetIntervalMs = 1000 / targetHz;
+    let lastQrUpdateT = performance.now();
+
+    // Display sizing (zoom)
+    const baseCanvasSize = 360;
+    let zoom = 1.0;
+
+    // Update flash colors (cycled each time QR updates)
+    const FLASH_COLORS = [
+      "#ff2d2d", // red
+      "#2ecc71", // green
+      "#2d7dff", // blue
+      "#ff8c1a", // orange
+      "#8e44ad", // purple
+      "#00c2d1", // cyan
+      "#ffd400"  // yellow
+    ];
+    let flashIndex = 0;
+
+    // Pixel toggle state
+    let pixelOn = false;
+
+    // FPS measurement (rAF loop FPS, not QR update rate)
+    let fpsWindowFrames = 0;
+    let lastFpsT = performance.now();
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    function setZoom(newZoom) {
+      zoom = clamp(newZoom, 0.5, 3.0);
+      zoomSlider.value = String(zoom);
+      zoomLabel.textContent = `${zoom.toFixed(2)}×`;
+      canvas.style.width = `${Math.round(baseCanvasSize * zoom)}px`;
+      canvas.style.height = `${Math.round(baseCanvasSize * zoom)}px`;
+    }
+
+    function updateTargetRate(hz) {
+      if (!isFinite(hz) || hz <= 0) return;
+      targetHz = hz;
+      targetIntervalMs = 1000 / targetHz;
+      lastQrUpdateT = performance.now(); // avoid burst after change
+    }
+
+    // Rate controls
+    rateSel.addEventListener("change", () => {
+      customRateInput.value = "";
+      updateTargetRate(parseFloat(rateSel.value));
+      forceRedraw(); // show hz immediately
+    });
+
+    customRateInput.addEventListener("change", () => {
+      const v = parseFloat(customRateInput.value);
+      if (v > 0) {
+        updateTargetRate(v);
+        forceRedraw();
+      }
+    });
+
+    // Zoom controls
+    zoomSlider.addEventListener("input", () => setZoom(parseFloat(zoomSlider.value)));
+    zoomOutBtn.addEventListener("click", () => setZoom(zoom - 0.10));
+    zoomInBtn.addEventListener("click", () => setZoom(zoom + 0.10));
+
+    fitBtn.addEventListener("click", () => {
+      const margin = 48;
+      const maxW = Math.max(200, window.innerWidth - margin);
+      const maxH = Math.max(200, window.innerHeight - margin - 260); // room for controls/payload
+      const fitPx = Math.floor(Math.min(maxW, maxH));
+      const fitZoom = fitPx / baseCanvasSize;
+      setZoom(fitZoom);
+    });
+
+    function resetAll() {
+      customRateInput.value = "";
+      rateSel.value = "60";
+      updateTargetRate(60);
+      setZoom(1.0);
+      running = true;
+      toggleBtn.textContent = "Pause";
+      forceRedraw();
+    }
+    resetBtn.addEventListener("click", resetAll);
+
+    toggleBtn.addEventListener("click", () => {
+      running = !running;
+      toggleBtn.textContent = running ? "Pause" : "Play";
+    });
+
+    // QR draw
+    function drawQr(text) {
+      const qr = qrcode(0, QR_EC_LEVEL);
+      qr.addData(text);
+      qr.make();
+
+      const n = qr.getModuleCount();
+      const total = n + 2 * QUIET_ZONE;
+      const px = Math.floor(Math.min(canvas.width, canvas.height) / total);
+
+      const size = px * total;
+      const ox = Math.floor((canvas.width - size) / 2);
+      const oy = Math.floor((canvas.height - size) / 2);
+
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#000";
+      for (let r = 0; r < n; r++) {
+        for (let c = 0; c < n; c++) {
+          if (qr.isDark(r, c)) {
+            ctx.fillRect(
+              ox + (c + QUIET_ZONE) * px,
+              oy + (r + QUIET_ZONE) * px,
+              px,
+              px
+            );
+          }
+        }
+      }
+    }
+
+    // Visual markers — only called on QR update
+    function tickUpdateMarkers(unixMs) {
+      const color = FLASH_COLORS[flashIndex % FLASH_COLORS.length];
+      flashIndex++;
+
+      flashEl.style.background = color;
+
+      // NEW: edge stripes use the same update color
+      vStripeEl.style.background = color;
+      hStripeEl.style.background = color;
+
+      pixelOn = !pixelOn;
+      pixelEl.style.background = pixelOn ? "#000" : "#fff";
+
+      tsLastUpdateEl.textContent = String(unixMs);
+    }
+
+    function makePayload() {
+      const tPerf = performance.now();
+      const tUnix = Date.now();
+
+      tsPerfEl.textContent = tPerf.toFixed(3);
+      tsUnixEl.textContent = String(tUnix);
+
+      return `perf=${tPerf.toFixed(3)}&t=${tUnix}&f=${frame}&hz=${targetHz}`;
+    }
+
+    function forceRedraw() {
+      const payload = makePayload();
+      payloadEl.textContent = payload;
+      frameEl.textContent = frame;
+      drawQr(payload);
+      tickUpdateMarkers(Date.now());
+    }
+
+    // Init
+    canvas.width = baseCanvasSize;
+    canvas.height = baseCanvasSize;
+    setZoom(1.0);
+    forceRedraw();
+
+    // Main loop
+    function loop(now) {
+      tsPerfEl.textContent = performance.now().toFixed(3);
+      tsUnixEl.textContent = String(Date.now());
+
+      if (running) {
+        if (now - lastQrUpdateT >= targetIntervalMs) {
+          lastQrUpdateT += targetIntervalMs;
+          frame++;
+
+          const payload = makePayload();
+          payloadEl.textContent = payload;
+          frameEl.textContent = frame;
+          drawQr(payload);
+
+          tickUpdateMarkers(Date.now());
+        }
+      }
+
+      fpsWindowFrames++;
+      if (now - lastFpsT >= 1000) {
+        fpsEl.textContent = (fpsWindowFrames * 1000 / (now - lastFpsT)).toFixed(1);
+        fpsWindowFrames = 0;
+        lastFpsT = now;
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
+

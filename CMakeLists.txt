@@ -319,6 +319,11 @@ target_compile_options(offline_sam_3dbody_render PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# QR timecode synchronization tool (optional; needs X11/Xrandr/qrencode)
+# ---------------------------------------------------------------------------
+add_subdirectory(synchronization)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 message(STATUS "")
