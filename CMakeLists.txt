@@ -324,6 +324,12 @@ target_compile_options(offline_sam_3dbody_render PRIVATE
 add_subdirectory(synchronization)
 
 # ---------------------------------------------------------------------------
+# multi-view capture & fusion (MULTIVIEW_PLAN.md) — .calib loader so far
+# ---------------------------------------------------------------------------
+enable_testing()
+add_subdirectory(multiview)
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 message(STATUS "")
