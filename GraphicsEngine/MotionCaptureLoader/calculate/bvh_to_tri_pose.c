@@ -1,5 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifdef _MSC_VER
+typedef long long ssize_t;
+#endif
+
 #include "bvh_to_tri_pose.h"
 
 #include "../../TrajectoryParser/InputParser_C.h"

@@ -1,5 +1,9 @@
 #include "fromBVH.h"
 
+#ifdef _MSC_VER
+typedef long long ssize_t;
+#endif
+
 #include <string.h>
 #include "../../TrajectoryParser/InputParser_C.h"
 #include "../edit/bvh_rename.h"
