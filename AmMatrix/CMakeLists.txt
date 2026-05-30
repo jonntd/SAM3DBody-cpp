@@ -30,7 +30,11 @@ add_library(
             simpleRenderer.c
             solids.c
            )
-target_link_libraries(AmMatrix m rt )
+if(WIN32)
+    target_link_libraries(AmMatrix)
+else()
+    target_link_libraries(AmMatrix m rt)
+endif()
 
 add_subdirectory(TestCPUOptimizedInstructionSet/) 
 
