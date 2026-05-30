@@ -31,11 +31,6 @@ jobs:
         .\vcpkg install opencv4:x64-windows glew:x64-windows opencl:x64-windows --recurse
         .\vcpkg integrate install
 
-    - name: Download model files
-      run: |
-        Invoke-WebRequest -Uri "https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip" -OutFile "models.zip"
-        Expand-Archive -Path "models.zip" -DestinationPath "."
-
     - name: Configure
       run: |
         mkdir build
@@ -52,6 +47,7 @@ jobs:
         mkdir artifacts
         copy build\Release\*.exe artifacts\
         copy build\Release\*.dll artifacts\
+        echo "⚠️ Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts\DOWNLOAD_MODELS.txt
 
     - uses: actions/upload-artifact@v4
       with:
@@ -77,11 +73,6 @@ jobs:
           libxi-dev \
           libxrandr-dev
 
-    - name: Download model files
-      run: |
-        wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip
-        unzip SAM3DBody-cpp-onnx-models.zip
-
     - name: Configure
       run: |
         mkdir build
@@ -100,6 +91,7 @@ jobs:
         cp build/fast_sam_3dbody_render artifacts/
         cp build/offline_sam_3dbody_render artifacts/
         cp build/*.so artifacts/ 2>/dev/null || true
+        echo "⚠️ Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts/DOWNLOAD_MODELS.txt
 
     - uses: actions/upload-artifact@v4
       with:
