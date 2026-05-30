@@ -2,9 +2,13 @@ name: Build
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
 
     steps:
@@ -12,20 +16,92 @@ jobs:
       with:
         submodules: recursive
 
-    - uses: lukka/get-cmake@latest
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Install vcpkg
+      run: |
+        git clone https://github.com/Microsoft/vcpkg.git
+        cd vcpkg
+        .\bootstrap-vcpkg.bat
+
+    - name: Install dependencies via vcpkg
+      run: |
+        cd vcpkg
+        .\vcpkg install opencv4:x64-windows glew:x64-windows opencl:x64-windows --recurse
+        .\vcpkg integrate install
+
+    - name: Download model files
+      run: |
+        Invoke-WebRequest -Uri "https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip" -OutFile "models.zip"
+        Expand-Archive -Path "models.zip" -DestinationPath "."
 
     - name: Configure
       run: |
         mkdir build
         cd build
-        cmake ..
+        cmake .. -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" -DCMAKE_BUILD_TYPE=Release
 
     - name: Build
       run: |
         cd build
-        cmake --build . --config Release
+        cmake --build . --config Release --parallel 4
+
+    - name: Prepare artifacts
+      run: |
+        mkdir artifacts
+        copy build\Release\*.exe artifacts\
+        copy build\Release\*.dll artifacts\
 
     - uses: actions/upload-artifact@v4
       with:
-        name: SAM3DBody
-        path: build/**
+        name: SAM3DBody-Windows-x64
+        path: artifacts/*
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libopencv-dev \
+          libglew-dev \
+          libgl1-mesa-dev \
+          libx11-dev \
+          libxi-dev \
+          libxrandr-dev
+
+    - name: Download model files
+      run: |
+        wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip
+        unzip SAM3DBody-cpp-onnx-models.zip
+
+    - name: Configure
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Prepare artifacts
+      run: |
+        mkdir -p artifacts
+        cp build/fast_sam_3dbody_run artifacts/
+        cp build/fast_sam_3dbody_render artifacts/
+        cp build/offline_sam_3dbody_render artifacts/
+        cp build/*.so artifacts/ 2>/dev/null || true
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: SAM3DBody-Linux-x64
+        path: artifacts/*

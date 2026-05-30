@@ -42,3 +42,4 @@ build/onnxruntime_dl/
 # Model files — distributed separately via HuggingFace
 onnx/
 SAM3DBody-cpp-onnx-models.zip
+.ace-tool/

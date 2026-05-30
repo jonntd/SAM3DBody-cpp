@@ -115,32 +115,49 @@ if(NOT DEFINED ONNX_RUNTIME_DIR OR ONNX_RUNTIME_DIR STREQUAL "")
         endforeach()
 
         if(ONNX_RUNTIME_DIR STREQUAL "" OR NOT DEFINED ONNX_RUNTIME_DIR)
-            # Download pre-built GPU package
+            # Download pre-built package based on platform
             set(_ORT_VERSION "1.20.1")
-            if(WITH_CUDA)
-                set(_ORT_ARCHIVE "onnxruntime-linux-x64-gpu-${_ORT_VERSION}.tgz")
+            
+            if(WIN32)
+                if(WITH_CUDA)
+                    set(_ORT_ARCHIVE "onnxruntime-win-x64-gpu-${_ORT_VERSION}.zip")
+                    set(_ORT_EXTRACTED "onnxruntime-win-x64-gpu-${_ORT_VERSION}")
+                else()
+                    set(_ORT_ARCHIVE "onnxruntime-win-x64-${_ORT_VERSION}.zip")
+                    set(_ORT_EXTRACTED "onnxruntime-win-x64-${_ORT_VERSION}")
+                endif()
             else()
-                set(_ORT_ARCHIVE "onnxruntime-linux-x64-${_ORT_VERSION}.tgz")
+                if(WITH_CUDA)
+                    set(_ORT_ARCHIVE "onnxruntime-linux-x64-gpu-${_ORT_VERSION}.tgz")
+                    set(_ORT_EXTRACTED "onnxruntime-linux-x64-gpu-${_ORT_VERSION}")
+                else()
+                    set(_ORT_ARCHIVE "onnxruntime-linux-x64-${_ORT_VERSION}.tgz")
+                    set(_ORT_EXTRACTED "onnxruntime-linux-x64-${_ORT_VERSION}")
+                endif()
             endif()
+            
             set(_ORT_URL "https://github.com/microsoft/onnxruntime/releases/download/v${_ORT_VERSION}/${_ORT_ARCHIVE}")
             set(_ORT_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/onnxruntime_dl")
-            if(WITH_CUDA)
-                set(_ORT_SUFFIX "-gpu")
-            else()
-                set(_ORT_SUFFIX "")
-            endif()
-            # After extraction + rename, contents live directly in _ORT_DOWNLOAD_DIR
             set(ONNX_RUNTIME_DIR "${_ORT_DOWNLOAD_DIR}")
 
             if(NOT EXISTS "${_ORT_DOWNLOAD_DIR}")
-                message(STATUS "Downloading ONNX Runtime ${_ORT_VERSION} …")
+                message(STATUS "Downloading ONNX Runtime ${_ORT_VERSION} for ${CMAKE_SYSTEM_NAME} …")
                 file(DOWNLOAD "${_ORT_URL}" "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}" SHOW_PROGRESS)
-                execute_process(
-                    COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}"
-                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-                )
+                
+                if(WIN32)
+                    execute_process(
+                        COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}"
+                        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+                    )
+                else()
+                    execute_process(
+                        COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}"
+                        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+                    )
+                endif()
+                
                 file(RENAME
-                    "${CMAKE_BINARY_DIR}/onnxruntime-linux-x64${_ORT_SUFFIX}-${_ORT_VERSION}"
+                    "${CMAKE_BINARY_DIR}/${_ORT_EXTRACTED}"
                     "${_ORT_DOWNLOAD_DIR}"
                 )
             endif()
@@ -231,6 +248,7 @@ endif()
 
 target_compile_options(fast_sam_3dbody PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
+    $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
 )
 
 # ---------------------------------------------------------------------------
@@ -242,13 +260,24 @@ target_link_libraries(fast_sam_3dbody_run PRIVATE fast_sam_3dbody)
 
 target_compile_options(fast_sam_3dbody_run PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
+    $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
 )
 
 # ---------------------------------------------------------------------------
 # fast_sam_3dbody_render  executable  (OpenGL overlay renderer)
 # ---------------------------------------------------------------------------
 find_package(OpenGL REQUIRED)
-find_package(GLEW   REQUIRED)
+
+if(WIN32)
+    set(GLEW_USE_STATIC_LIBS ON)
+endif()
+
+find_package(GLEW REQUIRED)
+
+if(WIN32)
+    message(STATUS "Windows build: Ensure GLEW is available via vcpkg or set GLEW_ROOT")
+    message(STATUS "  vcpkg install: vcpkg install glew:x64-windows")
+endif()
 
 add_executable(fast_sam_3dbody_render
     render/fast_sam_3dbody_render.cpp
@@ -272,21 +301,25 @@ target_link_libraries(fast_sam_3dbody_render PRIVATE
     OpenGL::GL
     GLEW::GLEW
     ${OpenCV_LIBS}
-    X11
-    rt
     m
     AmMatrix
 )
+
+if(NOT WIN32)
+    target_link_libraries(fast_sam_3dbody_render PRIVATE X11 rt)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(fast_sam_3dbody_render PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter -g -O0>
         $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -g -O0>
+        $<$<CXX_COMPILER_ID:MSVC>:/W3 /Od /Zi>
     )
 else()
     target_compile_options(fast_sam_3dbody_render PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
         $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -O2>
+        $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
     )
 endif()
 
@@ -316,6 +349,7 @@ target_link_libraries(offline_sam_3dbody_render PRIVATE
 
 target_compile_options(offline_sam_3dbody_render PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
+    $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
 )
 
 # ---------------------------------------------------------------------------
