@@ -61,6 +61,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <windows.h>
 static std::wstring utf8_to_wstr(const std::string& s) {
     if (s.empty()) return {};
