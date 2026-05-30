@@ -19,28 +19,38 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Install OpenCV (prebuilt)
+    - name: Install vcpkg
       run: |
-        # 下载预编译的 OpenCV 4.8.0（比 vcpkg 编译快很多）
-        Invoke-WebRequest -Uri "https://github.com/opencv/opencv/releases/download/4.8.0/opencv-4.8.0-windows.exe" -OutFile "opencv.exe"
-        7z x opencv.exe -o"C:\opencv" -y
-        echo "OpenCV_DIR=C:\opencv\build" >> $env:GITHUB_ENV
-
-    - name: Install GLEW via vcpkg (fast)
-      run: |
-        # GLEW 很小，用 vcpkg 编译也很快
         git clone --depth=1 https://github.com/Microsoft/vcpkg.git
         cd vcpkg
         .\bootstrap-vcpkg.bat
-        .\vcpkg install glew:x64-windows --recurse
+
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg/packages
+          vcpkg/installed
+          vcpkg/downloads
+          vcpkg/buildtrees
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('.github/workflows/build.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-
+
+    - name: Install dependencies via vcpkg
+      run: |
+        cd vcpkg
+        # 只编译 Release 版本，跳过 Debug（节省一半时间）
+        .\vcpkg install opencv4:x64-windows glew:x64-windows --recurse
         .\vcpkg integrate install
-        echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
+      env:
+        VCPKG_BUILD_TYPE: release
 
     - name: Configure
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="${{ env.OpenCV_DIR }}" -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake"
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
     - name: Build
       run: |
