@@ -79,7 +79,7 @@ enum mat4x4EItem
     12  13  14  15
 */
 
-ALIGN16_PREFIX const float identityMatrix4x4[16] ALIGN16_SUFFIX ={1.0,0.0,0.0,0.0,
+const float __attribute__((aligned(16))) identityMatrix4x4[16]={1.0,0.0,0.0,0.0,
                                                                 0.0,1.0,0.0,0.0,
                                                                 0.0,0.0,1.0,0.0,
                                                                 0.0,0.0,0.0,1.0};

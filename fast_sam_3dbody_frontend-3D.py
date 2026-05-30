@@ -68,108 +68,13 @@ class FsbResult(ctypes.Structure):
 
 
 def load_library(lib_dir: str) -> ctypes.CDLL:
-    if sys.platform.startswith("win"):
-        lib_name = "fast_sam_3dbody.dll"
-        lib_path = ""
-        possible_paths = [
-            os.path.join(lib_dir, lib_name),
-            os.path.join(lib_dir, "Release", lib_name),
-            os.path.join(lib_dir, "Debug", lib_name),
-            os.path.join(lib_dir, "libfast_sam_3dbody.dll"),
-            os.path.join(lib_dir, "Release", "libfast_sam_3dbody.dll"),
-            os.path.join(lib_dir, "Debug", "libfast_sam_3dbody.dll")
-        ]
-        for p in possible_paths:
-            if os.path.exists(p):
-                lib_path = p
-                break
-        
-        if not lib_path:
-            lib_path = os.path.join(lib_dir, lib_name)
-            
-        actual_lib_dir = os.path.dirname(lib_path)
-        
-        ggml_dirs = [
-            os.path.abspath(os.path.join(actual_lib_dir, "..", "bin", "Release")),
-            os.path.abspath(os.path.join(actual_lib_dir, "..", "bin", "Debug")),
-            os.path.abspath(os.path.join(actual_lib_dir, "..", "bin")),
-            os.path.abspath(os.path.join(lib_dir, "bin", "Release")),
-            os.path.abspath(os.path.join(lib_dir, "bin")),
-        ]
-        ggml_dir = ""
-        for gd in ggml_dirs:
-            if os.path.exists(os.path.join(gd, "ggml.dll")):
-                ggml_dir = gd
-                break
-                
-        ort_dirs = [
-            os.path.abspath(os.path.join(actual_lib_dir, "..", "onnxruntime_dl", "lib")),
-            os.path.abspath(os.path.join(lib_dir, "onnxruntime_dl", "lib")),
-        ]
-        ort_dir = ""
-        for od in ort_dirs:
-            if os.path.exists(os.path.join(od, "onnxruntime.dll")):
-                ort_dir = od
-                break
-                
-        opencv_dirs = [
-            os.path.abspath(os.path.join(actual_lib_dir, "..", "opencv_dl", "opencv", "build", "x64", "vc16", "bin")),
-            os.path.abspath(os.path.join(lib_dir, "opencv_dl", "opencv", "build", "x64", "vc16", "bin")),
-        ]
-        opencv_dir = ""
-        for ocd in opencv_dirs:
-            if os.path.exists(os.path.join(ocd, "opencv_world4100.dll")):
-                opencv_dir = ocd
-                break
-                
-        cuda_path = os.environ.get("CUDA_PATH")
-        cuda_bin = os.path.join(cuda_path, "bin") if cuda_path else "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.8\\bin"
-        
-        # cuDNN fallbacks
-        cudnn_paths = [
-            cuda_bin,
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.0\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.1\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.2\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.3\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.4\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.5\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.6\\bin",
-            "C:\\Program Files\\NVIDIA\\CUDNN\\v9.7\\bin",
-            "C:\\Program Files\\Blackmagic Design\\DaVinci Resolve"
-        ]
-        cudnn_dir = ""
-        for cp in cudnn_paths:
-            if os.path.exists(cp) and (os.path.exists(os.path.join(cp, "cudnn64_9.dll")) or os.path.exists(os.path.join(cp, "cudnn64_8.dll"))):
-                cudnn_dir = cp
-                break
-        
-        dll_dirs = [actual_lib_dir]
-        if ggml_dir: dll_dirs.append(ggml_dir)
-        if ort_dir: dll_dirs.append(ort_dir)
-        if opencv_dir: dll_dirs.append(opencv_dir)
-        if os.path.exists(cuda_bin): dll_dirs.append(cuda_bin)
-        if cudnn_dir: dll_dirs.append(cudnn_dir)
-        
-        if hasattr(os, "add_dll_directory"):
-            for d in dll_dirs:
-                if os.path.exists(d):
-                    try:
-                        os.add_dll_directory(d)
-                    except Exception:
-                        pass
-                        
-        os.environ["PATH"] = os.pathsep.join(dll_dirs) + os.pathsep + os.environ.get("PATH", "")
-    elif sys.platform.startswith("darwin"):
-        lib_path = os.path.join(lib_dir, "libfast_sam_3dbody.dylib")
-    else:
-        lib_path = os.path.join(lib_dir, "libfast_sam_3dbody.so")
-        prev = os.environ.get("LD_LIBRARY_PATH", "")
-        ort_lib = os.path.join(lib_dir, "onnxruntime_dl", "lib")
-        os.environ["LD_LIBRARY_PATH"] = ":".join(filter(None, [lib_dir, ort_lib, prev]))
-
+    lib_path = os.path.join(lib_dir, "libfast_sam_3dbody.so")
     if not os.path.exists(lib_path):
         sys.exit(f"Library not found: {lib_path}\nBuild the C++ project first.")
+
+    prev = os.environ.get("LD_LIBRARY_PATH", "")
+    ort_lib = os.path.join(lib_dir, "onnxruntime_dl", "lib")
+    os.environ["LD_LIBRARY_PATH"] = ":".join(filter(None, [lib_dir, ort_lib, prev]))
 
     lib = ctypes.CDLL(lib_path)
     lib.fsb_create.restype  = ctypes.c_void_p

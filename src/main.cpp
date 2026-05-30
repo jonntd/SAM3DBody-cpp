@@ -16,11 +16,12 @@
 #include <sys/stat.h>
 #include <time.h>
 
-// Monotonic nanosecond timestamp
+// Monotonic nanosecond timestamp (POSIX; avoids chrono overhead in tight loops)
 static uint64_t get_mono_ns()
 {
-    auto now = std::chrono::steady_clock::now();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
 using Clock = std::chrono::steady_clock;
@@ -81,11 +82,6 @@ struct Config : public CommonConfig
     int         cap_w       = 0;     // capture width  (0 = driver default)
     int         cap_h       = 0;     // capture height (0 = driver default)
     double      cap_fps     = 0.0;   // capture fps    (0 = driver default)
-
-    // JSON pose output
-    std::string json_dir;
-    std::string json_prefix = "pose";
-    int         json_char_index = 0;
 };
 
 static void print_usage(const char* prog)
@@ -117,9 +113,6 @@ static void print_usage(const char* prog)
     printf("  --no-bvh-body-shape-change  Keep body.bvh's authored body bone lengths (no median rewrite)\n");
     printf("  --no-bvh-hand-shape-change  Keep body.bvh's authored hand/finger bone lengths\n");
     printf("  --bvh-raw-fingers           Do NOT rescale finger End-Site OFFSETs to MHR fingertip lengths\n");
-    printf("  --json-dir PATH   Directory to write joint angles JSON files per frame (for Blender addon)\n");
-    printf("  --json-prefix STR Prefix for joint angles JSON files (default: pose)\n");
-    printf("  --json-char-index INDEX Index of tracked person to export to JSON (default: 0)\n");
     printf("  --headless        Do not open display windows\n");
     printf("  --info            Print pipeline info and exit\n");
     printf("  --butterworth              Apply Butterworth low-pass filter to MHR output vectors\n");
@@ -147,9 +140,6 @@ static Config parse_args(int argc, char** argv)
         ARG1("--cy",       cy,          std::stof)
         ARG1("--out",      csv_path,    std::string)
         ARG1("-o",         csv_path,    std::string)
-        ARG1("--json-dir", json_dir,    std::string)
-        ARG1("--json-prefix", json_prefix, std::string)
-        ARG1("--json-char-index", json_char_index, std::stoi)
 #undef ARG1
         if (!strcmp(argv[i], "--render-size") && i+2 < argc)
         {
@@ -216,59 +206,6 @@ static void print_result(int person_idx, const fsb::MHRResult& r)
         printf("             kp3d[0]=[%.3f,%.3f,%.3f]\n",
                r.keypoints_3d[0], r.keypoints_3d[1], r.keypoints_3d[2]);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Save MHRResult to JSON for Blender Addon
-// ---------------------------------------------------------------------------
-static void save_pose_json(const std::string& path, const fsb::MHRResult& r)
-{
-    std::ofstream f(path);
-    if (!f.is_open())
-    {
-        fprintf(stderr, "[main] Failed to open pose JSON: %s\n", path.c_str());
-        return;
-    }
-    f << "{\n";
-    f << "  \"detected\": true,\n";
-    f << "  \"pred_cam_t\": [" << r.pred_cam_t[0] << ", " << r.pred_cam_t[1] << ", " << r.pred_cam_t[2] << "],\n";
-    f << "  \"transforms\": [\n";
-    for (size_t j = 0; j < 127; ++j)
-    {
-        f << "    [";
-        if (r.joint_transforms.size() == 127 * 8)
-        {
-            // Convert translation components (0, 1, 2) from meters to centimeters
-            f << r.joint_transforms[j * 8 + 0] * 100.0f << ", "
-              << r.joint_transforms[j * 8 + 1] * 100.0f << ", "
-              << r.joint_transforms[j * 8 + 2] * 100.0f << ", "
-              << r.joint_transforms[j * 8 + 3] << ", "
-              << r.joint_transforms[j * 8 + 4] << ", "
-              << r.joint_transforms[j * 8 + 5] << ", "
-              << r.joint_transforms[j * 8 + 6] << ", "
-              << r.joint_transforms[j * 8 + 7];
-        }
-        else
-        {
-            // Fallback (Identity rotation, zero translation, 1.0 scale)
-            f << "0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0";
-        }
-        f << "]";
-        if (j + 1 < 127) f << ",";
-        f << "\n";
-    }
-    f << "  ]\n";
-    f << "}\n";
-}
-
-static void save_empty_pose_json(const std::string& path)
-{
-    std::ofstream f(path);
-    if (!f.is_open()) return;
-    f << "{\n";
-    f << "  \"detected\": false,\n";
-    f << "  \"transforms\": []\n";
-    f << "}\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -550,12 +487,15 @@ int main(int argc, char** argv)
                              c.bvh_compensate_finger_endsites,
                              c.bvh_enforce_hand_limits,
                              c.bvh_zero_hand_pose,
-                             c.bvh_sticky_hand_pose))
+                             c.bvh_sticky_hand_pose,
+                             c.bvh_rest_align,
+                             c.bvh_dump_rest_dirs))
         {
             fprintf(stderr, "[main] BVH writer failed to open (continuing without BVH output).\n");
         }
         else
         {
+            bvh_writer.set_foot_contact(c.bvh_foot_contact);
             printf("[main] Writing BVH to: %s  (template: %s)\n",
                    c.bvh_path.c_str(), c.bvh_template.c_str());
         }
@@ -823,23 +763,6 @@ int main(int argc, char** argv)
         // BVH
         if (bvh_writer.is_open())
             bvh_writer.write_frame(results);
-
-        // JSON Pose Export
-        if (!c.json_dir.empty())
-        {
-            char filename_buf[512];
-            snprintf(filename_buf, sizeof(filename_buf), "%s/%s_F_%04d.json", 
-                     c.json_dir.c_str(), c.json_prefix.c_str(), frame_count);
-            
-            if (c.json_char_index < (int)results.size())
-            {
-                save_pose_json(filename_buf, results[c.json_char_index]);
-            }
-            else
-            {
-                save_empty_pose_json(filename_buf);
-            }
-        }
 
         // Visualization
         if (!c.headless)

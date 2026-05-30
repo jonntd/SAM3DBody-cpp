@@ -6,13 +6,6 @@
 #ifndef MATRIX4X4TOOLS_H_INCLUDED
 #define MATRIX4X4TOOLS_H_INCLUDED
 
-#if defined(_MSC_VER)
-  #define ALIGN16_PREFIX __declspec(align(16))
-  #define ALIGN16_SUFFIX
-#else
-  #define ALIGN16_PREFIX
-  #define ALIGN16_SUFFIX __attribute__((aligned(16)))
-#endif
 
 #ifdef __cplusplus
 extern "C"
@@ -72,7 +65,7 @@ struct Matrix4x4OfFloats
      I31     , I32 , I33 , I34 ,
      I41     , I42 , I43 , I44
     */
-  ALIGN16_PREFIX float m[16] ALIGN16_SUFFIX;
+  float __attribute__((aligned(16))) m[16];
 };
 
 
@@ -86,7 +79,7 @@ struct Vector4x1OfFloats
      IRC => Item Row/Column =>
      I11, I12, I13, I14
     */
-  ALIGN16_PREFIX float m[4] ALIGN16_SUFFIX;
+  float __attribute__((aligned(16))) m[4];
 };
 
 
