@@ -19,38 +19,32 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Install vcpkg
+    - name: Install OpenCV (prebuilt)
       run: |
-        git clone --depth=1 https://github.com/Microsoft/vcpkg.git
-        cd vcpkg
-        .\bootstrap-vcpkg.bat
+        # 下载预编译的 OpenCV 4.10.0（官方构建）
+        $opencvUrl = "https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-windows.exe"
+        Invoke-WebRequest -Uri $opencvUrl -OutFile "opencv.exe"
+        7z x opencv.exe -o"C:\opencv" -y
+        # 设置环境变量供 CMake 使用
+        echo "OpenCV_DIR=C:\opencv\build" >> $env:GITHUB_ENV
 
-    - name: Cache vcpkg packages
-      uses: actions/cache@v4
-      with:
-        path: |
-          vcpkg/packages
-          vcpkg/installed
-          vcpkg/downloads
-          vcpkg/buildtrees
-        key: vcpkg-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
-        restore-keys: |
-          vcpkg-${{ runner.os }}-
-
-    - name: Install dependencies via vcpkg
+    - name: Install GLEW (prebuilt)
       run: |
-        cd vcpkg
-        # 只编译 Release 版本，跳过 Debug（节省一半时间）
-        .\vcpkg install opencv4:x64-windows glew:x64-windows --recurse
-        .\vcpkg integrate install
-      env:
-        VCPKG_BUILD_TYPE: release
+        # 下载预编译的 GLEW 2.2.0
+        $glewUrl = "https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0-win32.zip"
+        Invoke-WebRequest -Uri $glewUrl -OutFile "glew.zip"
+        7z x glew.zip -o"C:\glew" -y
+        # 设置环境变量
+        echo "GLEW_ROOT=C:\glew\glew-2.2.0" >> $env:GITHUB_ENV
 
     - name: Configure
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        cmake .. `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DOpenCV_DIR="${{ env.OpenCV_DIR }}" `
+          -DGLEW_ROOT="${{ env.GLEW_ROOT }}"
 
     - name: Build
       run: |
