@@ -19,32 +19,11 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Install OpenCV (prebuilt)
-      run: |
-        # 下载预编译的 OpenCV 4.10.0（官方构建）
-        $opencvUrl = "https://github.com/opencv/opencv/releases/download/4.10.0/opencv-4.10.0-windows.exe"
-        Invoke-WebRequest -Uri $opencvUrl -OutFile "opencv.exe"
-        7z x opencv.exe -o"C:\opencv" -y
-        # 设置环境变量供 CMake 使用
-        echo "OpenCV_DIR=C:\opencv\build" >> $env:GITHUB_ENV
-
-    - name: Install GLEW (prebuilt)
-      run: |
-        # 下载预编译的 GLEW 2.2.0
-        $glewUrl = "https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0-win32.zip"
-        Invoke-WebRequest -Uri $glewUrl -OutFile "glew.zip"
-        7z x glew.zip -o"C:\glew" -y
-        # 设置环境变量
-        echo "GLEW_ROOT=C:\glew\glew-2.2.0" >> $env:GITHUB_ENV
-
     - name: Configure
       run: |
         mkdir build
         cd build
-        cmake .. `
-          -DCMAKE_BUILD_TYPE=Release `
-          -DOpenCV_DIR="${{ env.OpenCV_DIR }}" `
-          -DGLEW_ROOT="${{ env.GLEW_ROOT }}"
+        cmake .. -DCMAKE_BUILD_TYPE=Release
 
     - name: Build
       run: |
