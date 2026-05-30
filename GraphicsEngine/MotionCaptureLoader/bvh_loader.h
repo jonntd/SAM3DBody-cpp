@@ -8,6 +8,61 @@
 #ifndef BVH_LOADER_H_INCLUDED
 #define BVH_LOADER_H_INCLUDED
 
+#ifdef _MSC_VER
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#if defined(_WIN64)
+typedef __int64 ssize_t;
+#else
+typedef int ssize_t;
+#endif
+
+static inline ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
+    size_t pos;
+    int c;
+
+    if (lineptr == NULL || stream == NULL || n == NULL) {
+        return -1;
+    }
+
+    c = getc(stream);
+    if (c == EOF) {
+        return -1;
+    }
+
+    if (*lineptr == NULL) {
+        *lineptr = (char *)malloc(128);
+        if (*lineptr == NULL) {
+            return -1;
+        }
+        *n = 128;
+    }
+
+    pos = 0;
+    while(c != EOF) {
+        if (pos + 1 >= *n) {
+            size_t new_len = *n * 2;
+            char *new_ptr = (char *)realloc(*lineptr, new_len);
+            if (new_ptr == NULL) {
+                return -1;
+            }
+            *lineptr = new_ptr;
+            *n = new_len;
+        }
+
+        (*lineptr)[pos++] = c;
+        if (c == '\n') {
+            break;
+        }
+        c = getc(stream);
+    }
+
+    (*lineptr)[pos] = '\0';
+    return (ssize_t)pos;
+}
+#endif
+
 
 #ifdef __cplusplus
 extern "C"

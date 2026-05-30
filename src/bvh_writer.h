@@ -20,7 +20,19 @@ struct MHR_LBS_Data;
 struct BVH_MotionCapture;
 namespace fsb { struct MHRResult; }
 
-class BVHWriter
+#ifndef FSB_API
+#ifdef _WIN32
+#  ifdef fast_sam_3dbody_EXPORTS
+#    define FSB_API __declspec(dllexport)
+#  else
+#    define FSB_API __declspec(dllimport)
+#  endif
+#else
+#  define FSB_API
+#endif
+#endif
+
+class FSB_API BVHWriter
 {
 public:
     // Public because the static NAME_MAP table in bvh_writer.cpp tags each entry
@@ -36,9 +48,7 @@ public:
               bool               compensate_finger_endsites = true,
               bool               enforce_hand_limits        = false,
               bool               zero_hand_pose             = false,
-              bool               sticky_hand_pose           = false,
-              bool               rest_align                 = true,
-              bool               dump_rest_dirs             = false);
+              bool               sticky_hand_pose           = false);
 
     void write_frame(const std::vector<fsb::MHRResult>& results);
 
@@ -64,18 +74,6 @@ public:
 
     bool is_open()           const { return mc_ != nullptr; }
     int  channels_per_frame()const { return total_channels_; }
-
-    // Optional label inserted before the numeric id in per-person filenames:
-    //   "<stem>_<prefix><id>.bvh".  Empty (default) keeps the documented
-    //   "<stem>_<id>.bvh" convention.  The offline --bvh-split-scenes path
-    //   sets this to e.g. "scene0_person" → "<stem>_scene0_person0.bvh".
-    void set_id_label_prefix(const std::string& p) { id_prefix_ = p; }
-
-    // Enable the foot-contact cleanup pass (root vertical leveling + 2-bone leg
-    // IK to pin planted feet).  Runs per person at close() over the full motion
-    // buffer, so it works for both the live and offline writers.  Off by
-    // default — opt in via --foot-contact.
-    void set_foot_contact(bool on) { foot_contact_ = on; }
 
     BVHWriter()  = default;
     ~BVHWriter() { if (is_open()) close(); }
@@ -114,14 +112,6 @@ private:
     BVH_MotionCapture* mc_              = nullptr;
     MHR_LBS_Data*      lbs_             = nullptr;
     std::string        out_path_;
-    std::string        id_prefix_;       // inserted before <id> in filenames
-
-    // Rest-frame retarget: per-slot shortest-arc quaternion (MHR rest bone dir
-    // → body.bvh rest bone dir), applied as q_align·R·q_align⁻¹ to re-aim each
-    // joint's rotation onto the template's bone.  Fixes flexion→twist leak when
-    // the template rest pose differs from MHR's (e.g. T-pose vs A-pose arms).
-    std::vector<float> q_bone_align_;    // [slots × 4]; identity where aligned
-    bool               rest_align_ = true;
     int                total_channels_  = 0;
     float              frame_time_      = 1.0f / 30.0f;
     int                session_frames_  = 0;
@@ -131,7 +121,6 @@ private:
     bool               enforce_hand_limits_        = false;
     bool               zero_hand_pose_             = false;
     bool               sticky_hand_pose_           = false;
-    bool               foot_contact_               = false;
 
     std::vector<BvhSlot> slots_;             // shared template
     int                  root_bvh_jid_ = -1;
@@ -153,7 +142,6 @@ private:
     void  append_frame_for(PerPerson& p, const fsb::MHRResult& r);
     void  pad_continuation_frame(PerPerson& p);
     void  rewrite_offsets_for(PerPerson& p);
-    void  foot_contact_pass(PerPerson& p);
     bool  dump_one_person(const PerPerson& p);
 
     // Tracker

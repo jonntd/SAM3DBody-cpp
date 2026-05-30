@@ -53,6 +53,10 @@ struct MHRResult {
     // Raw model params fed to the LBS pipeline  [204]
     std::array<float, 204> mhr_model_params{};
 
+    // Joint transformations [127 × 8] (tx, ty, tz, qx, qy, qz, qw, scale)
+    // tx, ty, tz are in meters in the original coordinate space.
+    std::vector<float> joint_transforms;
+
     // ── Geometry (populated when Pipeline::Config::skip_body_model = false) ──
     std::vector<float> pred_vertices;  // [18439 × 3]  SMPL-like mesh
     std::vector<float> keypoints_3d;   // [70 × 3]     3-D joints
@@ -102,8 +106,20 @@ struct PipelineConfig {
     bool zero_face_params = true;   // Force face expression coefficients to 0 (default on; pass --dev-face to enable)
 };
 
+#ifndef FSB_API
+#ifdef _WIN32
+#  ifdef fast_sam_3dbody_EXPORTS
+#    define FSB_API __declspec(dllexport)
+#  else
+#    define FSB_API __declspec(dllimport)
+#  endif
+#else
+#  define FSB_API
+#endif
+#endif
+
 // ─── Pipeline class ───────────────────────────────────────────────────────────
-class Pipeline {
+class FSB_API Pipeline {
 public:
     Pipeline();
     ~Pipeline();
@@ -132,15 +148,6 @@ public:
 #if defined(FSB_HAS_OPENCV_MAT)
     std::vector<MHRResult> process_mat(const void* cv_mat_ptr);
 #endif
-
-    // ── Whole-frame ViT scene embedding ──────────────────────────────────────
-    // Runs the backbone on the *entire* image (resized to the backbone's
-    // 512×512 input), global-average-pools the [1280,32,32] feature map over
-    // the spatial grid and L2-normalises the result.  Returns a 1280-d unit
-    // vector whose cosine similarity to the previous frame's embedding is a
-    // robust, semantic scene-cut signal (used by the offline detector).
-    // Returns an empty vector if the backbone session isn't available.
-    std::vector<float> scene_embedding(const uint8_t* bgr, int width, int height);
 
     // True after a successful load().
     bool is_loaded() const;

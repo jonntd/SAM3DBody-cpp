@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+add_definitions(-D_USE_MATH_DEFINES)
+
 # ---------------------------------------------------------------------------
 # Model files check
 # ---------------------------------------------------------------------------
@@ -58,18 +60,32 @@ endif()
 # ---------------------------------------------------------------------------
 # CUDA  (optional – enables ONNX Runtime CUDA EP and ggml CUDA backend)
 # ---------------------------------------------------------------------------
-find_package(CUDAToolkit QUIET)
-if(CUDAToolkit_FOUND)
-    set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "CUDA architectures" FORCE)
-    enable_language(CUDA)
-    set(GGML_CUDA     ON  CACHE BOOL "" FORCE)
-    set(GGML_CUDA_F16 ON  CACHE BOOL "" FORCE)
-    set(WITH_CUDA     ON)
-    message(STATUS "CUDA ${CUDAToolkit_VERSION} found (sm_${CMAKE_CUDA_ARCHITECTURES})")
+option(WITH_CUDA "Build with CUDA support" ON)
+if(WITH_CUDA)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "CUDA architectures" FORCE)
+            enable_language(CUDA)
+            set(GGML_CUDA     ON  CACHE BOOL "" FORCE)
+            set(GGML_CUDA_F16 ON  CACHE BOOL "" FORCE)
+            set(WITH_CUDA     ON)
+            message(STATUS "CUDA ${CUDAToolkit_VERSION} found (sm_${CMAKE_CUDA_ARCHITECTURES})")
+        else()
+            set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+            set(WITH_CUDA OFF)
+            message(STATUS "CUDA toolkit not found – CPU-only build")
+        endif()
+    else()
+        set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+        set(WITH_CUDA OFF)
+        message(STATUS "CUDA compiler/toolset not found – CPU-only build")
+    endif()
 else()
     set(GGML_CUDA OFF CACHE BOOL "" FORCE)
-    set(WITH_CUDA OFF)
-    message(STATUS "CUDA not found – CPU-only build")
+    message(STATUS "CUDA support disabled – CPU-only build")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -115,49 +131,45 @@ if(NOT DEFINED ONNX_RUNTIME_DIR OR ONNX_RUNTIME_DIR STREQUAL "")
         endforeach()
 
         if(ONNX_RUNTIME_DIR STREQUAL "" OR NOT DEFINED ONNX_RUNTIME_DIR)
-            # Download pre-built package based on platform
+            # Download pre-built GPU package
             set(_ORT_VERSION "1.20.1")
-            
             if(WIN32)
-                if(WITH_CUDA)
-                    set(_ORT_ARCHIVE "onnxruntime-win-x64-gpu-${_ORT_VERSION}.zip")
-                    set(_ORT_EXTRACTED "onnxruntime-win-x64-gpu-${_ORT_VERSION}")
-                else()
-                    set(_ORT_ARCHIVE "onnxruntime-win-x64-${_ORT_VERSION}.zip")
-                    set(_ORT_EXTRACTED "onnxruntime-win-x64-${_ORT_VERSION}")
-                endif()
+                set(_ORT_OS_PREFIX "win")
+                set(_ORT_EXT "zip")
             else()
-                if(WITH_CUDA)
-                    set(_ORT_ARCHIVE "onnxruntime-linux-x64-gpu-${_ORT_VERSION}.tgz")
-                    set(_ORT_EXTRACTED "onnxruntime-linux-x64-gpu-${_ORT_VERSION}")
-                else()
-                    set(_ORT_ARCHIVE "onnxruntime-linux-x64-${_ORT_VERSION}.tgz")
-                    set(_ORT_EXTRACTED "onnxruntime-linux-x64-${_ORT_VERSION}")
-                endif()
+                set(_ORT_OS_PREFIX "linux")
+                set(_ORT_EXT "tgz")
             endif()
-            
+            if(WITH_CUDA)
+                set(_ORT_SUFFIX "-gpu")
+            else()
+                set(_ORT_SUFFIX "")
+            endif()
+            set(_ORT_ARCHIVE "onnxruntime-${_ORT_OS_PREFIX}-x64${_ORT_SUFFIX}-${_ORT_VERSION}.${_ORT_EXT}")
             set(_ORT_URL "https://github.com/microsoft/onnxruntime/releases/download/v${_ORT_VERSION}/${_ORT_ARCHIVE}")
             set(_ORT_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/onnxruntime_dl")
+            # After extraction + rename, contents live directly in _ORT_DOWNLOAD_DIR
             set(ONNX_RUNTIME_DIR "${_ORT_DOWNLOAD_DIR}")
 
             if(NOT EXISTS "${_ORT_DOWNLOAD_DIR}")
-                message(STATUS "Downloading ONNX Runtime ${_ORT_VERSION} for ${CMAKE_SYSTEM_NAME} …")
-                file(DOWNLOAD "${_ORT_URL}" "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}" SHOW_PROGRESS)
-                
+                message(STATUS "Downloading ONNX Runtime ${_ORT_VERSION} …")
                 if(WIN32)
                     execute_process(
-                        COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}"
-                        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+                        COMMAND powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri \"${_ORT_URL}\" -OutFile \"${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}\""
+                        RESULT_VARIABLE _DL_RES
                     )
+                    if(NOT _DL_RES EQUAL 0)
+                        message(FATAL_ERROR "PowerShell download of ONNX Runtime failed with exit code: ${_DL_RES}")
+                    endif()
                 else()
-                    execute_process(
-                        COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}"
-                        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-                    )
+                    file(DOWNLOAD "${_ORT_URL}" "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}" SHOW_PROGRESS)
                 endif()
-                
+                execute_process(
+                    COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_ORT_ARCHIVE}"
+                    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+                )
                 file(RENAME
-                    "${CMAKE_BINARY_DIR}/${_ORT_EXTRACTED}"
+                    "${CMAKE_BINARY_DIR}/onnxruntime-${_ORT_OS_PREFIX}-x64${_ORT_SUFFIX}-${_ORT_VERSION}"
                     "${_ORT_DOWNLOAD_DIR}"
                 )
             endif()
@@ -168,12 +180,29 @@ endif()
 if(NOT TARGET onnxruntime::onnxruntime)
     set(ORT_INCLUDE_DIRS "${ONNX_RUNTIME_DIR}/include")
     set(ORT_LIB_DIR      "${ONNX_RUNTIME_DIR}/lib")
-    find_library(ORT_LIB onnxruntime PATHS "${ORT_LIB_DIR}" NO_DEFAULT_PATH REQUIRED)
-    add_library(onnxruntime::onnxruntime SHARED IMPORTED)
-    set_target_properties(onnxruntime::onnxruntime PROPERTIES
-        IMPORTED_LOCATION "${ORT_LIB}"
-        INTERFACE_INCLUDE_DIRECTORIES "${ORT_INCLUDE_DIRS}"
-    )
+    if(WIN32)
+        find_library(ORT_LIB_IMPLIB onnxruntime PATHS "${ORT_LIB_DIR}" NO_DEFAULT_PATH REQUIRED)
+        find_program(ORT_DLL onnxruntime.dll PATHS "${ORT_LIB_DIR}" NO_DEFAULT_PATH)
+        if(NOT ORT_DLL)
+            find_program(ORT_DLL onnxruntime.dll PATHS "${ONNX_RUNTIME_DIR}/bin" "${ORT_LIB_DIR}" NO_DEFAULT_PATH)
+            if(NOT ORT_DLL)
+                set(ORT_DLL "${ORT_LIB_IMPLIB}")
+            endif()
+        endif()
+        add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_IMPLIB "${ORT_LIB_IMPLIB}"
+            IMPORTED_LOCATION "${ORT_DLL}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ORT_INCLUDE_DIRS}"
+        )
+    else()
+        find_library(ORT_LIB onnxruntime PATHS "${ORT_LIB_DIR}" NO_DEFAULT_PATH REQUIRED)
+        add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_LOCATION "${ORT_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ORT_INCLUDE_DIRS}"
+        )
+    endif()
     set(ORT_LIBS onnxruntime::onnxruntime)
     message(STATUS "ONNX Runtime at ${ONNX_RUNTIME_DIR}")
 endif()
@@ -181,7 +210,35 @@ endif()
 # ---------------------------------------------------------------------------
 # OpenCV
 # ---------------------------------------------------------------------------
-find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui dnn video)
+find_package(OpenCV QUIET COMPONENTS core imgproc videoio highgui dnn video)
+if(NOT OpenCV_FOUND)
+    if(WIN32)
+        set(_OPENCV_VERSION "4.10.0")
+        set(_OPENCV_ARCHIVE "opencv-${_OPENCV_VERSION}-windows.exe")
+        set(_OPENCV_URL "https://github.com/opencv/opencv/releases/download/${_OPENCV_VERSION}/${_OPENCV_ARCHIVE}")
+        set(_OPENCV_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/opencv_dl")
+        if(NOT EXISTS "${_OPENCV_DOWNLOAD_DIR}")
+            file(MAKE_DIRECTORY "${_OPENCV_DOWNLOAD_DIR}")
+            message(STATUS "Downloading OpenCV ${_OPENCV_VERSION} …")
+            execute_process(
+                COMMAND powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri \"${_OPENCV_URL}\" -OutFile \"${CMAKE_BINARY_DIR}/${_OPENCV_ARCHIVE}\""
+                RESULT_VARIABLE _DL_RES
+            )
+            if(NOT _DL_RES EQUAL 0)
+                message(FATAL_ERROR "PowerShell download of OpenCV failed with exit code: ${_DL_RES}")
+            endif()
+            message(STATUS "Extracting OpenCV (this may take a minute) …")
+            execute_process(
+                COMMAND ${CMAKE_COMMAND} -E tar xf "${CMAKE_BINARY_DIR}/${_OPENCV_ARCHIVE}"
+                WORKING_DIRECTORY "${_OPENCV_DOWNLOAD_DIR}"
+            )
+        endif()
+        set(OpenCV_DIR "${_OPENCV_DOWNLOAD_DIR}/opencv/build")
+        find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui dnn video)
+    else()
+        find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio highgui dnn video)
+    endif()
+endif()
 message(STATUS "OpenCV ${OpenCV_VERSION}")
 
 set(GRAPHICS_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/GraphicsEngine)
@@ -201,7 +258,6 @@ add_library(fast_sam_3dbody SHARED
     src/fast_sam_3dbody.cpp
     src/fast_sam_3dbody_capi.cpp
     src/bvh_writer.cpp
-    src/offline_passes.cpp
     ${GRAPHICS_ENGINE_DIR}/ModelLoader/model_loader_tri.c
     ${GRAPHICS_ENGINE_DIR}/ModelLoader/model_loader_transform_joints.c
     # MotionCaptureLoader (BVH I/O) ------------------------------------------------
@@ -228,13 +284,22 @@ target_include_directories(fast_sam_3dbody PUBLIC
     ${OpenCV_INCLUDE_DIRS}
 )
 
-target_link_libraries(fast_sam_3dbody PUBLIC
-    ggml
-    ${ORT_LIBS}
-    ${OpenCV_LIBS}
-    AmMatrix
-    m
-)
+if(WIN32)
+    target_link_libraries(fast_sam_3dbody PUBLIC
+        ggml
+        ${ORT_LIBS}
+        ${OpenCV_LIBS}
+        AmMatrix
+    )
+else()
+    target_link_libraries(fast_sam_3dbody PUBLIC
+        ggml
+        ${ORT_LIBS}
+        ${OpenCV_LIBS}
+        AmMatrix
+        m
+    )
+endif()
 
 if(WITH_CUDA)
     target_sources(fast_sam_3dbody PRIVATE src/mhr_lbs_cuda.cu)
@@ -248,8 +313,93 @@ endif()
 
 target_compile_options(fast_sam_3dbody PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
-    $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
 )
+
+if(WIN32)
+    # Copy ONNX Runtime DLLs to the target directory so they can be loaded by the application
+    add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ONNX_RUNTIME_DIR}/lib/onnxruntime.dll"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ONNX_RUNTIME_DIR}/lib/onnxruntime_providers_shared.dll"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+    )
+    if(EXISTS "${ONNX_RUNTIME_DIR}/lib/onnxruntime_providers_cuda.dll")
+        add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNX_RUNTIME_DIR}/lib/onnxruntime_providers_cuda.dll"
+                "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        )
+    endif()
+    if(EXISTS "${ONNX_RUNTIME_DIR}/lib/onnxruntime_providers_tensorrt.dll")
+        add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNX_RUNTIME_DIR}/lib/onnxruntime_providers_tensorrt.dll"
+                "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        )
+    endif()
+    # Copy GGML DLLs to the same target directory
+    add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:ggml>"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:ggml-base>"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:ggml-cpu>"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+    )
+    if(TARGET ggml-cuda)
+        add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:ggml-cuda>"
+                "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        )
+    endif()
+    # Copy OpenCV DLLs to the same target directory
+    add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OpenCV_DIR}/x64/vc16/bin/opencv_world4100.dll"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OpenCV_DIR}/x64/vc16/bin/opencv_videoio_ffmpeg4100_64.dll"
+            "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+    )
+
+    # Automatically find and copy cuDNN DLLs (needed for ONNX Runtime CUDA Execution Provider)
+    find_file(CUDNN_DLL
+        NAMES cudnn64_9.dll cudnn64_8.dll
+        PATHS
+            "C:/Program Files/NVIDIA/CUDNN/v9.0/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.1/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.2/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.3/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.4/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.5/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.6/bin"
+            "C:/Program Files/NVIDIA/CUDNN/v9.7/bin"
+            "C:/Program Files/Blackmagic Design/DaVinci Resolve"
+            ENV CUDA_PATH
+        PATH_SUFFIXES bin
+        NO_DEFAULT_PATH
+    )
+    if(CUDNN_DLL)
+        get_filename_component(CUDNN_BIN_DIR "${CUDNN_DLL}" DIRECTORY)
+        message(STATUS "Found cuDNN DLL at: ${CUDNN_DLL}")
+        file(GLOB CUDNN_DLLS "${CUDNN_BIN_DIR}/cudnn*.dll")
+        foreach(_dll ${CUDNN_DLLS})
+            add_custom_command(TARGET fast_sam_3dbody POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_dll}"
+                    "$<TARGET_FILE_DIR:fast_sam_3dbody>/"
+            )
+        endforeach()
+    else()
+        message(WARNING "cuDNN DLL (cudnn64_9.dll / cudnn64_8.dll) not found. CUDA EP may fail at runtime unless cuDNN is in system PATH.")
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # fast_sam_3dbody_run  executable
@@ -260,67 +410,54 @@ target_link_libraries(fast_sam_3dbody_run PRIVATE fast_sam_3dbody)
 
 target_compile_options(fast_sam_3dbody_run PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
-    $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
 )
 
 # ---------------------------------------------------------------------------
 # fast_sam_3dbody_render  executable  (OpenGL overlay renderer)
 # ---------------------------------------------------------------------------
-find_package(OpenGL REQUIRED)
-
-if(WIN32)
-    set(GLEW_USE_STATIC_LIBS ON)
-endif()
-
-find_package(GLEW REQUIRED)
-
-if(WIN32)
-    message(STATUS "Windows build: Ensure GLEW is available via vcpkg or set GLEW_ROOT")
-    message(STATUS "  vcpkg install: vcpkg install glew:x64-windows")
-endif()
-
-add_executable(fast_sam_3dbody_render
-    render/fast_sam_3dbody_render.cpp
-    ${GRAPHICS_ENGINE_DIR}/System/glx3.c
-    ${GRAPHICS_ENGINE_DIR}/ModelLoader/model_loader_tri.c
-    ${GRAPHICS_ENGINE_DIR}/ModelLoader/model_loader_transform_joints.c
-)
-
-target_compile_definitions(fast_sam_3dbody_render PRIVATE USE_GLEW)
-
-target_include_directories(fast_sam_3dbody_render PRIVATE
-    src
-    ${GRAPHICS_ENGINE_DIR}
-    ${ORT_INCLUDE_DIRS}
-    ${OpenCV_INCLUDE_DIRS}
-    ${GLEW_INCLUDE_DIRS}
-)
-
-target_link_libraries(fast_sam_3dbody_render PRIVATE
-    fast_sam_3dbody
-    OpenGL::GL
-    GLEW::GLEW
-    ${OpenCV_LIBS}
-    m
-    AmMatrix
-)
-
 if(NOT WIN32)
-    target_link_libraries(fast_sam_3dbody_render PRIVATE X11 rt)
-endif()
+    find_package(OpenGL REQUIRED)
+    find_package(GLEW   REQUIRED)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(fast_sam_3dbody_render PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter -g -O0>
-        $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -g -O0>
-        $<$<CXX_COMPILER_ID:MSVC>:/W3 /Od /Zi>
+    add_executable(fast_sam_3dbody_render
+        render/fast_sam_3dbody_render.cpp
+        ${GRAPHICS_ENGINE_DIR}/System/glx3.c
+        ${GRAPHICS_ENGINE_DIR}/ModelLoader/model_loader_tri.c
+        ${GRAPHICS_ENGINE_DIR}/ModelLoader/model_loader_transform_joints.c
     )
-else()
-    target_compile_options(fast_sam_3dbody_render PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
-        $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -O2>
-        $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
+
+    target_compile_definitions(fast_sam_3dbody_render PRIVATE USE_GLEW)
+
+    target_include_directories(fast_sam_3dbody_render PRIVATE
+        src
+        ${GRAPHICS_ENGINE_DIR}
+        ${ORT_INCLUDE_DIRS}
+        ${OpenCV_INCLUDE_DIRS}
+        ${GLEW_INCLUDE_DIRS}
     )
+
+    target_link_libraries(fast_sam_3dbody_render PRIVATE
+        fast_sam_3dbody
+        OpenGL::GL
+        GLEW::GLEW
+        ${OpenCV_LIBS}
+        X11
+        rt
+        m
+        AmMatrix
+    )
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        target_compile_options(fast_sam_3dbody_render PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter -g -O0>
+            $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -g -O0>
+        )
+    else()
+        target_compile_options(fast_sam_3dbody_render PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
+            $<$<COMPILE_LANGUAGE:C>:-Wall -Wno-unused-parameter -O2>
+        )
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -341,27 +478,23 @@ target_include_directories(offline_sam_3dbody_render PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
 
-target_link_libraries(offline_sam_3dbody_render PRIVATE
-    fast_sam_3dbody
-    ${OpenCV_LIBS}
-    m
-)
+if(WIN32)
+    target_link_libraries(offline_sam_3dbody_render PRIVATE
+        fast_sam_3dbody
+        ${OpenCV_LIBS}
+    )
+else()
+    target_link_libraries(offline_sam_3dbody_render PRIVATE
+        fast_sam_3dbody
+        ${OpenCV_LIBS}
+        m
+    )
+endif()
+
 
 target_compile_options(offline_sam_3dbody_render PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wno-unused-parameter -O3 -march=native>
-    $<$<CXX_COMPILER_ID:MSVC>:/W3 /O2>
 )
-
-# ---------------------------------------------------------------------------
-# QR timecode synchronization tool (optional; needs X11/Xrandr/qrencode)
-# ---------------------------------------------------------------------------
-add_subdirectory(synchronization)
-
-# ---------------------------------------------------------------------------
-# multi-view capture & fusion (MULTIVIEW_PLAN.md) — .calib loader so far
-# ---------------------------------------------------------------------------
-enable_testing()
-add_subdirectory(multiview)
 
 # ---------------------------------------------------------------------------
 # Summary
