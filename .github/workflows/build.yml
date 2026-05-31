@@ -144,13 +144,17 @@ jobs:
           
           **⚠️ Models are NOT included in this release.**
           
-          Download from HuggingFace:
+          **Official model repository:**
           ```
           https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
           ```
           
+          > **Note**: If the above link is inaccessible, the repository may be private or require access permission. 
+          > Please check the original repository for updates: https://github.com/AmmmarkoV/SAM3DBody-cpp
+          
           **Option A: Full package (CUDA GPU required)**
           ```bash
+          # Download from HuggingFace (if accessible)
           wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip
           unzip SAM3DBody-cpp-onnx-models.zip
           # Creates onnx/ directory with all models (~5GB)
@@ -158,11 +162,15 @@ jobs:
           
           **Option B: CPU-only (no GPU)**
           ```bash
-          # Download base models first, then add FP32 backbone
+          # Download FP32 backbone for CPU inference
           wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx
           wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx.data
           mv backbone_fp32.onnx* onnx/
           ```
+          
+          **If models are unavailable**, you may need to:
+          1. Contact the repository owner for access
+          2. Export models from the Python training environment (see [Fast-SAM-3D-Body](https://github.com/AmmmarkoV/Fast-SAM-3D-Body))
 
           ### Step 2: Extract Release
 
