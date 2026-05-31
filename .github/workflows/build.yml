@@ -38,7 +38,7 @@ jobs:
         mkdir artifacts
         copy build\Release\*.exe artifacts\
         copy build\Release\*.dll artifacts\
-        echo "Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts\DOWNLOAD_MODELS.txt
+        echo "Models not included. Download from: https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts\DOWNLOAD_MODELS.txt
 
     - uses: actions/upload-artifact@v4
       with:
@@ -82,7 +82,7 @@ jobs:
         cp build/fast_sam_3dbody_render artifacts/
         cp build/offline_sam_3dbody_render artifacts/
         cp build/*.so artifacts/ 2>/dev/null || true
-        echo "Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts/DOWNLOAD_MODELS.txt
+        echo "Models not included. Download from: https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts/DOWNLOAD_MODELS.txt
 
     - uses: actions/upload-artifact@v4
       with:
@@ -146,16 +146,16 @@ jobs:
           
           **Official model repository:**
           ```
-          https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
+          https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models
           ```
           
           > **Note**: If the above link is inaccessible, the repository may be private or require access permission. 
-          > Please check the original repository for updates: https://github.com/AmmmarkoV/SAM3DBody-cpp
+          > Please check the original repository for updates: https://github.com/AmmarkoV/SAM3DBody-cpp
           
           **Option A: Full package (CUDA GPU required)**
           ```bash
           # Download from HuggingFace (if accessible)
-          wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip
+          wget https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip
           unzip SAM3DBody-cpp-onnx-models.zip
           # Creates onnx/ directory with all models (~5GB)
           ```
@@ -163,14 +163,14 @@ jobs:
           **Option B: CPU-only (no GPU)**
           ```bash
           # Download FP32 backbone for CPU inference
-          wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx
-          wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx.data
+          wget https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx
+          wget https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx.data
           mv backbone_fp32.onnx* onnx/
           ```
           
           **If models are unavailable**, you may need to:
           1. Contact the repository owner for access
-          2. Export models from the Python training environment (see [Fast-SAM-3D-Body](https://github.com/AmmmarkoV/Fast-SAM-3D-Body))
+          2. Export models from the Python training environment (see [Fast-SAM-3D-Body](https://github.com/AmmarkoV/Fast-SAM-3D-Body))
 
           ### Step 2: Extract Release
 
@@ -257,7 +257,7 @@ jobs:
           ## 📚 More Information
 
           - **Full Documentation**: https://github.com/jonntd/SAM3DBody-cpp#readme
-          - **Model Download**: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
+          - **Model Download**: https://huggingface.co/AmmarkoV/SAM3DBody-cpp-onnx-models
           - **Issues**: https://github.com/jonntd/SAM3DBody-cpp/issues
         files: |
           release/SAM3DBody-Windows-x64.zip
