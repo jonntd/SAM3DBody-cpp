@@ -9,6 +9,12 @@
 #include <opencv2/highgui.hpp>
 
 #include <chrono>
+
+#ifdef _MSC_VER
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -19,9 +25,16 @@
 // Monotonic nanosecond timestamp (POSIX; avoids chrono overhead in tight loops)
 static uint64_t get_mono_ns()
 {
+#ifdef _MSC_VER
+    LARGE_INTEGER freq, count;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&count);
+    return (uint64_t)(count.QuadPart * 1000000000ULL / freq.QuadPart);
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 using Clock = std::chrono::steady_clock;
