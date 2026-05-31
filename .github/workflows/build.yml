@@ -1,4 +1,4 @@
-name: Build
+name: Build and Release
 
 on:
   workflow_dispatch:
@@ -35,7 +35,7 @@ jobs:
         mkdir artifacts
         copy build\Release\*.exe artifacts\
         copy build\Release\*.dll artifacts\
-        echo "⚠️ Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts\DOWNLOAD_MODELS.txt
+        echo "Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts\DOWNLOAD_MODELS.txt
 
     - uses: actions/upload-artifact@v4
       with:
@@ -79,9 +79,74 @@ jobs:
         cp build/fast_sam_3dbody_render artifacts/
         cp build/offline_sam_3dbody_render artifacts/
         cp build/*.so artifacts/ 2>/dev/null || true
-        echo "⚠️ Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts/DOWNLOAD_MODELS.txt
+        echo "Models not included. Download from: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models" > artifacts/DOWNLOAD_MODELS.txt
 
     - uses: actions/upload-artifact@v4
       with:
         name: SAM3DBody-Linux-x64
         path: artifacts/*
+
+  create-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+    - name: Download Windows artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: SAM3DBody-Windows-x64
+        path: windows
+
+    - name: Download Linux artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: SAM3DBody-Linux-x64
+        path: linux
+
+    - name: Package artifacts
+      run: |
+        mkdir -p release
+        cd windows
+        zip -r ../release/SAM3DBody-Windows-x64.zip .
+        cd ../linux
+        tar -czf ../release/SAM3DBody-Linux-x64.tar.gz .
+        cd ..
+
+    - name: Get version
+      id: version
+      run: |
+        VERSION=$(date +'%Y.%m.%d')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: v${{ steps.version.outputs.version }}
+        body: |
+          ## SAM3DBody-cpp Release
+
+          ### Supported Platforms
+          - **Windows x64**: Executables + all dependency DLLs
+          - **Linux x64**: Executables + shared libraries
+
+          ### Model Files
+          **Models not included**. Download from:
+          https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
+
+          ### Usage
+          ```bash
+          # Windows
+          fast_sam_3dbody_run.exe --config config.txt
+
+          # Linux
+          ./fast_sam_3dbody_run --config config.txt
+          ```
+        files: |
+          release/SAM3DBody-Windows-x64.zip
+          release/SAM3DBody-Linux-x64.tar.gz
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
