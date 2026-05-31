@@ -129,23 +129,128 @@ jobs:
         name: v${{ steps.version.outputs.version }}
         body: |
           ## SAM3DBody-cpp Release
+          
+          Standalone C++ inference engine for SAM-3D-Body — zero Python dependency at runtime.
 
-          ### Supported Platforms
-          - **Windows x64**: Executables + all dependency DLLs
-          - **Linux x64**: Executables + shared libraries
+          ### 📦 Supported Platforms
+          - **Windows x64**: `SAM3DBody-Windows-x64.zip` - Executables + all dependency DLLs
+          - **Linux x64**: `SAM3DBody-Linux-x64.tar.gz` - Executables + shared libraries
 
-          ### Model Files
-          **Models not included**. Download from:
-          https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
+          ---
 
-          ### Usage
-          ```bash
-          # Windows
-          fast_sam_3dbody_run.exe --config config.txt
+          ## 🚀 Quick Start
 
-          # Linux
-          ./fast_sam_3dbody_run --config config.txt
+          ### Step 1: Download Models
+          
+          **⚠️ Models are NOT included in this release.**
+          
+          Download from HuggingFace:
           ```
+          https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
+          ```
+          
+          **Option A: Full package (CUDA GPU required)**
+          ```bash
+          wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/SAM3DBody-cpp-onnx-models.zip
+          unzip SAM3DBody-cpp-onnx-models.zip
+          # Creates onnx/ directory with all models (~5GB)
+          ```
+          
+          **Option B: CPU-only (no GPU)**
+          ```bash
+          # Download base models first, then add FP32 backbone
+          wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx
+          wget https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models/resolve/main/backbone_fp32.onnx.data
+          mv backbone_fp32.onnx* onnx/
+          ```
+
+          ### Step 2: Extract Release
+
+          **Windows:**
+          ```powershell
+          # Extract SAM3DBody-Windows-x64.zip to C:\SAM3DBody
+          Expand-Archive SAM3DBody-Windows-x64.zip -DestinationPath C:\SAM3DBody
+          ```
+
+          **Linux:**
+          ```bash
+          tar -xzf SAM3DBody-Linux-x64.tar.gz
+          ```
+
+          ### Step 3: Run
+
+          **Windows (PowerShell):**
+          ```powershell
+          cd C:\SAM3DBody
+          
+          # Single image
+          .\fast_sam_3dbody_run.exe --onnx-dir onnx --gguf onnx\pipeline.gguf --yolo onnx\yolo.onnx --from image.jpg
+          
+          # Video file
+          .\fast_sam_3dbody_run.exe --onnx-dir onnx --gguf onnx\pipeline.gguf --yolo onnx\yolo.onnx --from video.mp4
+          
+          # Webcam
+          .\fast_sam_3dbody_run.exe --onnx-dir onnx --gguf onnx\pipeline.gguf --yolo onnx\yolo.onnx --from 0
+          
+          # CPU mode (use backbone_fp32.onnx)
+          .\fast_sam_3dbody_run.exe --onnx-dir onnx --gguf onnx\pipeline.gguf --yolo onnx\yolo.onnx --backbone backbone_fp32.onnx --cuda -1 --from video.mp4
+          ```
+
+          **Linux:**
+          ```bash
+          # Single image
+          ./fast_sam_3dbody_run --onnx-dir onnx --gguf onnx/pipeline.gguf --yolo onnx/yolo.onnx --from image.jpg
+          
+          # Video + BVH export
+          ./fast_sam_3dbody_run --onnx-dir onnx --gguf onnx/pipeline.gguf --yolo onnx/yolo.onnx --from video.mp4 --bvh output.bvh --headless
+          
+          # Webcam
+          ./fast_sam_3dbody_run --onnx-dir onnx --gguf onnx/pipeline.gguf --yolo onnx/yolo.onnx --from 0
+          ```
+
+          ---
+
+          ## 📋 Common Parameters
+
+          | Parameter | Description | Default |
+          |-----------|-------------|---------|
+          | `--onnx-dir PATH` | Model directory | Required |
+          | `--gguf PATH` | pipeline.gguf path | Required |
+          | `--yolo PATH` | YOLO model path | Required |
+          | `--from SRC` | Input: image/video path or camera index | Required |
+          | `--cuda DEVICE` | CUDA device (-1 = CPU) | 0 |
+          | `--bvh PATH` | Export BVH motion capture file | None |
+          | `--headless` | No display window | False |
+          | `--skip-body` | Skip body model (faster) | False |
+          | `--out PATH` | Output CSV file path | None |
+
+          ---
+
+          ## 🎬 BVH Motion Capture Export
+
+          Export standard BVH files for Blender:
+          ```bash
+          ./fast_sam_3dbody_run --from video.mp4 --bvh output.bvh --headless
+          # Creates: output_0.bvh, output_1.bvh, ... (one per person)
+          ```
+
+          ---
+
+          ## ⚠️ Important Notes
+
+          1. **GPU Required for Default Models**: The default `backbone.onnx` uses BF16 format and requires CUDA GPU
+          2. **CPU Mode**: Use `backbone_fp32.onnx` + `--cuda -1` for CPU-only inference
+          3. **Performance**:
+             - GPU mode: Real-time or near real-time
+             - CPU mode: 5-15 seconds per frame (not recommended for videos)
+
+          ---
+
+          ## 📚 More Information
+
+          - **Full Documentation**: https://github.com/jonntd/SAM3DBody-cpp#readme
+          - **Model Download**: https://huggingface.co/AmmmarkoV/SAM3DBody-cpp-onnx-models
+          - **Issues**: https://github.com/jonntd/SAM3DBody-cpp/issues
         files: |
           release/SAM3DBody-Windows-x64.zip
           release/SAM3DBody-Linux-x64.tar.gz
