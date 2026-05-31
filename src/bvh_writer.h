@@ -16,11 +16,20 @@
 #include <unordered_map>
 #include <vector>
 
+// DLL export macro (same as fast_sam_3dbody.h)
+#if defined(_WIN32) && defined(FSB_EXPORTS)
+    #define FSB_API __declspec(dllexport)
+#elif defined(_WIN32)
+    #define FSB_API __declspec(dllimport)
+#else
+    #define FSB_API
+#endif
+
 struct MHR_LBS_Data;
 struct BVH_MotionCapture;
 namespace fsb { struct MHRResult; }
 
-class BVHWriter
+class FSB_API BVHWriter
 {
 public:
     // Public because the static NAME_MAP table in bvh_writer.cpp tags each entry
