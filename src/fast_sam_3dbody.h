@@ -19,10 +19,19 @@
 #include <vector>
 #include <cstdint>
 
+// DLL export macro
+#if defined(_WIN32) && defined(FSB_EXPORTS)
+    #define FSB_API __declspec(dllexport)
+#elif defined(_WIN32)
+    #define FSB_API __declspec(dllimport)
+#else
+    #define FSB_API
+#endif
+
 namespace fsb {
 
 // ─── Output per detected person ──────────────────────────────────────────────
-struct MHRResult {
+struct FSB_API MHRResult {
     // Bounding box in original image  [x1, y1, x2, y2]
     std::array<float, 4> bbox{};
 
@@ -74,7 +83,7 @@ struct MHRResult {
 };
 
 // ─── Pipeline configuration ───────────────────────────────────────────────────
-struct PipelineConfig {
+struct FSB_API PipelineConfig {
     // Paths
     std::string onnx_dir;           // Directory with backbone.onnx, decoder.onnx, body_model.onnx
     std::string backbone_name = "backbone.onnx"; // filename within onnx_dir; override for quantized variant
@@ -103,7 +112,7 @@ struct PipelineConfig {
 };
 
 // ─── Pipeline class ───────────────────────────────────────────────────────────
-class Pipeline {
+class FSB_API Pipeline {
 public:
     Pipeline();
     ~Pipeline();

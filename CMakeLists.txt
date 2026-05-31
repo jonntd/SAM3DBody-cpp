@@ -273,6 +273,8 @@ add_library(fast_sam_3dbody SHARED
     ${TRAJ_DIR}/InputParser_C.c
 )
 
+target_compile_definitions(fast_sam_3dbody PRIVATE FSB_EXPORTS)
+
 target_include_directories(fast_sam_3dbody PUBLIC
     src
     ${GRAPHICS_ENGINE_DIR}
